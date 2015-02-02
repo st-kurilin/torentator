@@ -13,4 +13,12 @@ class BencodingSpec extends FlatSpec {
     it should "parse integers " in {
         assert(parse("i3e") === Success(BInteger(3)))
     }
+
+    it should "parse list of inters" in {
+        assert(parse("li3ei21ee") === Success(BList(List(BInteger(3), BInteger(21)))))
+    }
+
+    it should "parse list of strings" in {
+     assert(parse("l4:spam4:eggse") === Success(BList(List(BString("spam"), BString("eggs")))))   
+    }
 }

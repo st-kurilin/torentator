@@ -10,9 +10,10 @@ object Bencoding {
     import scala.util.parsing.combinator._
 
     object Parser extends JavaTokenParsers {
-        def str: Parser[BString] = (wholeNumber ^^ {_.toInt}) >> {n=> ":" ~> """.*""".r} ^^ {case x => BString(x.toString)}
+        def str: Parser[BString] = (wholeNumber ^^ {_.toInt}) >> {n=> ":" ~> repN(n, """.""".r)} ^^ {case x => BString(x.mkString(""))}
         def int: Parser[BInteger] = ("i" ~>  wholeNumber <~ "e") ^^ {case x => BInteger(x.toInt)}
-        def expr: Parser[Bencode] = str | int
+        def list: Parser[BList] = ("l" ~>  rep(expr) <~ "e") ^^ {case x => BList(x)}
+        def expr: Parser[Bencode] = str | int | list
         def apply(str: String) = {
             parseAll(expr, str) match {
                 case Success(r, _) => util.Success(r)
