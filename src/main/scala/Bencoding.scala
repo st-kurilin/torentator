@@ -36,6 +36,14 @@ object Bencoding {
     def parse(str: String): util.Try[Bencode] = {
         Parser.apply(str)
     }
+
+    def hash(str: String) = {
+        val startIndex = str.indexOf("info") + "info".length
+        val endIndex = str.length - "e".length
+        val infoValue = str.substring(startIndex, endIndex)
+        
+        java.security.MessageDigest.getInstance("SHA1").digest(infoValue.getBytes)
+    }
 }
 
 

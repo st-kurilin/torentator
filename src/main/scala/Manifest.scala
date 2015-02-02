@@ -2,7 +2,7 @@ package torentator
 
 object Manifest {
     import Bencoding._
-    def apply(encoded: Bencode): Manifest = {
+    def apply(encoded: Bencode, hash: Seq[Int]): Manifest = {
         encoded match {
             case BDictionary(m) =>
                 val announce = m("announce") match {case BString(s) => s}
@@ -13,14 +13,14 @@ object Manifest {
                                 Some(BInteger(piece)),
                                 Some(BInteger(length)),
                                 None) => 
-                                new SingleFileManifest(name, new java.net.URL(announce), piece, length)
+                                new SingleFileManifest(name, new java.net.URL(announce), hash, piece, length)
 
                             case (Some(BString(name)), 
                                 Some(BInteger(piece)),
                                 None,
                                 Some(BList(l))) => 
                                 val paths = l.map{case BString(s) => s}
-                                new MultiFileManifest(name, new java.net.URL(announce), piece, paths)
+                                new MultiFileManifest(name, new java.net.URL(announce), hash, piece, paths)
                         }
                         
                 }
@@ -32,9 +32,10 @@ sealed trait Manifest {
     def name: String
     def announce: java.net.URL
     def pieceLenght: Long
+    def hash: Seq[Int]
 }
-case class SingleFileManifest(name: String, announce: java.net.URL, pieceLenght: Long, length: Long) extends Manifest
-case class MultiFileManifest(name: String, announce: java.net.URL, pieceLenght: Long, paths: Seq[String]) extends Manifest {
+case class SingleFileManifest(name: String, announce: java.net.URL, hash: Seq[Int], pieceLenght: Long, length: Long) extends Manifest
+case class MultiFileManifest (name: String, announce: java.net.URL, hash: Seq[Int], pieceLenght: Long, paths: Seq[String]) extends Manifest {
     require(!paths.isEmpty)
 }    
 

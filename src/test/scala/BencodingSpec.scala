@@ -31,4 +31,11 @@ class BencodingSpec extends FlatSpec {
         assert(parse("d4:spaml1:a1:bee") === Success(BDictionary(
             Map("spam" -> BList(List(BString("a"), BString("b")))))))
     }
+
+    it should "calculate hash for value" in {
+        val infoValue = "foobar"
+        val infoValueHash =  java.security.MessageDigest.getInstance("SHA1").digest(infoValue.getBytes)
+
+        assert (hash(s"d8:announce4:spam4:info${infoValue}e") === infoValueHash)
+    }
 }
