@@ -13,7 +13,13 @@ object Bencoding {
         def str: Parser[BString] = (wholeNumber ^^ {_.toInt}) >> {n=> ":" ~> repN(n, """.""".r)} ^^ {case x => BString(x.mkString(""))}
         def int: Parser[BInteger] = ("i" ~>  wholeNumber <~ "e") ^^ {case x => BInteger(x.toInt)}
         def list: Parser[BList] = ("l" ~>  rep(expr) <~ "e") ^^ {case x => BList(x)}
-        def expr: Parser[Bencode] = str | int | list
+        def dict: Parser[BDictionary] = ("d" ~> rep(repN(2, expr)) <~ "e") ^^ {case x => 
+            BDictionary(x.foldLeft(Map.empty[String, Bencode]) {
+                case (r, BString(key)::(value:Bencode)::Nil) =>
+                    r + (key -> value)
+            })
+        }
+        def expr: Parser[Bencode] = str | int | list | dict
         def apply(str: String) = {
             parseAll(expr, str) match {
                 case Success(r, _) => util.Success(r)

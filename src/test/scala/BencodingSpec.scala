@@ -21,4 +21,14 @@ class BencodingSpec extends FlatSpec {
     it should "parse list of strings" in {
      assert(parse("l4:spam4:eggse") === Success(BList(List(BString("spam"), BString("eggs")))))   
     }
+
+    it should "parse dicts" in {
+         assert(parse("d3:cow3:moo4:spam4:eggse") === Success(BDictionary(
+             Map("cow" -> BString("moo"), "spam" -> BString("eggs")))))
+    }
+
+    it should "parse dicts with lists" in {
+        assert(parse("d4:spaml1:a1:bee") === Success(BDictionary(
+            Map("spam" -> BList(List(BString("a"), BString("b")))))))
+    }
 }
