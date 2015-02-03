@@ -10,7 +10,8 @@ object Bencoding {
     import scala.util.parsing.combinator._
 
     object Parser extends JavaTokenParsers {
-        def str: Parser[BString] = (wholeNumber ^^ {_.toInt}) >> { n=> ":" ~> repN(n, """.""".r)} ^^ {
+        override val skipWhitespace = false
+        def str: Parser[BString] = (wholeNumber ^^ {_.toInt}) >> { n=> ":" ~> repN(n, """\S""".r | whiteSpace)} ^^ {
             case x => BString(x.mkString(""))
         }
         def int: Parser[BInteger] = ("i" ~>  wholeNumber <~ "e") ^^ {case x => BInteger(x.toInt)}
@@ -25,8 +26,8 @@ object Bencoding {
         def apply(str: String) = {
             parseAll(expr, str) match {
                 case Success(r, _) => util.Success(r)
-                case Failure(r, _) => util.Failure(new RuntimeException(r))
-                case Error(r, _) => util.Failure(new RuntimeException(r))
+                case Failure(r, o) => println(s">>>failure ${r} -- ${o.pos}"); util.Failure(new RuntimeException(r))
+                case Error(r, o) => println(s">>>error ${r} -- ${o}"); util.Failure(new RuntimeException(r))
             }
             
         }
@@ -41,7 +42,7 @@ object Bencoding {
         val startIndex = str.indexOf("info") + "info".length
         val endIndex = str.length - "e".length
         val infoValue = str.substring(startIndex, endIndex)
-        
+
         java.security.MessageDigest.getInstance("SHA1").digest(infoValue.getBytes)
     }
 }

@@ -10,6 +10,10 @@ class BencodingSpec extends FlatSpec {
         assert(parse("4:spam") === Success(BString("spam")))
     }
 
+    it should "parse parse strings with spaces" in {
+        assert(parse("4:sp m") === Success(BString("sp m")))
+    }
+
     it should "parse integers " in {
         assert(parse("i3e") === Success(BInteger(3)))
     }
