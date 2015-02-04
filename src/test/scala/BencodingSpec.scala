@@ -31,9 +31,15 @@ class BencodingSpec extends FlatSpec {
              Map("cow" -> BString("moo"), "spam" -> BString("eggs")))))
     }
 
-    it should "parse dicts with lists" in {
+    it should "parse lists in dicts" in {
         assert(parse("d4:spaml1:a1:bee") === Success(BDictionary(
             Map("spam" -> BList(List(BString("a"), BString("b")))))))
+    }
+
+    it should "parse dicts in lists" in {
+        assert(parse("ld4:spami23e2:spi3eed3:abc4:defgee") === Success(BList(List(
+            BDictionary(Map("spam" -> BInteger(23), "sp"  -> BInteger(3))),
+            BDictionary(Map("abc" -> BString("defg")))))))
     }
 
     it should "calculate hash for value" in {
