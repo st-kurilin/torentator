@@ -47,8 +47,23 @@ class ManifestSpec extends FlatSpec with Matchers {
             new MultiFileManifest(name, new java.net.URI(announce), hash, piece, files)))
     }
 
-    it should "be creatable from real file" in {
-        val manifest = Manifest(new java.io.File("./src/test/resources/sample.torrent"))
+    it should "be creatable from real file (SingleFileManifest)" in {
+        val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent"))
+
+        manifest match {
+            case Success(SingleFileManifest(name, announce, hash, pieceLenght, length)) => 
+                name should not be empty
+                announce should not be (null)
+                hash should have size 20
+                pieceLenght should not be (0)
+                length should not be (0)
+            case Success(m) => fail(m.toString)
+            case Failure(e) => fail(e)
+        }
+    }
+
+    it should "be creatable from real file (MultiFileManifest)" in {
+        val manifest = Manifest(new java.io.File("./src/test/resources/sample.multi.udp.torrent"))
 
         manifest match {
             case Success(MultiFileManifest(name, announce, hash, pieceLenght, files)) => 
