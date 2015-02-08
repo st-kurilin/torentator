@@ -57,6 +57,7 @@ class ManifestSpec extends FlatSpec with Matchers {
                 hash should have size 20
                 pieceLenght should not be (0)
                 length should not be (0)
+                assert(hash === Bencoding.parseByteArray("1619ecc9373c3639f4ee3e261638f29b33a6cbd6"))
             case Success(m) => fail(m.toString)
             case Failure(e) => fail(e)
         }

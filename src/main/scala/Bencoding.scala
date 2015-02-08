@@ -10,7 +10,6 @@ object Bencoding {
     import scala.util.parsing.combinator._
 
     object Parser extends JavaTokenParsers {
-        //override val skipWhitespace = false
         def anyChar: Parser[Char] = new Parser[Char] {
             override def apply(in: Input): ParseResult[Char] = {
                 return Success(in.first, in.rest)
@@ -44,12 +43,61 @@ object Bencoding {
         Parser.apply(str)
     }
 
-    def hash(str: String) = {
-        val startIndex = str.indexOf("info") + "info".length
-        val endIndex = str.length - "e".length
-        val infoValue = str.substring(startIndex, endIndex)
+    def urlEncode(hash: Seq[Byte]) = {
+        val ints = hash.map(_.toInt & 0xFF)
+        val asIs = Set('-', '.', '_') map (_.toInt)
+        val asIsRanges = Set(
+            '0'.toInt to '9'.toInt,
+            'a'.toInt to 'z'.toInt,
+            'A'.toInt to 'Z'.toInt)
 
-        java.security.MessageDigest.getInstance("SHA1").digest(infoValue.getBytes)
+        val out = new StringBuilder();
+        for (letter <- ints) {
+            if (asIs.contains(letter) || asIsRanges.exists(_.contains(letter))) {
+              out.append(letter.toChar);
+            } else {
+                var s = Integer.toHexString(letter).toUpperCase()
+                if(s.length() == 1) {
+                    s = "0" + s;
+                }
+                out.append("%" + s.substring(s.length() - 2, s.length()))
+            }
+        }
+        out.toString();
+    }
+
+    def infoHash(str: Seq[Byte]) = {
+        def subindex(big: Seq[Byte], bi: Int, small: Seq[Byte], si: Int): Option[Int] = {
+            require(bi >= 0 && si >= 0)
+            val (sl, bl) = (small.size, big.size)
+            (bi, si) match {
+                case (_, `sl`) => Some(bi - si)
+                case (`bl`, _) => None
+                case _ if big(bi) == small(si) => subindex(big, bi + 1, small, si + 1)
+                case _ => subindex(big, bi - si + 1, small, 0)
+            }
+        }
+        val infoArray = "info".getBytes.toList
+        val ss = subindex(str, 0, infoArray, 0)
+        val startIndex = ss.get + infoArray.size
+        val endIndex = str.length - 1
+
+        val infoValue = str.slice(startIndex, endIndex)
+        val seq = str.slice(startIndex, endIndex)
+        java.security.MessageDigest.getInstance("SHA1").digest(seq.toArray)
+    }
+
+    def parseByteArray(s: String): Seq[Byte] = {
+        val o: Tuple2[String, List[Byte]] = (("", List.empty[Byte]))
+        val (_, r) = s.foldRight(o) { (x, r) =>
+            val (cur, res) = r
+            if (cur.isEmpty) {
+                (x.toString, res)
+            } else {
+                ("", Integer.parseInt(x + cur, 16).toByte :: res)
+            }
+        }
+        r
     }
 }
 

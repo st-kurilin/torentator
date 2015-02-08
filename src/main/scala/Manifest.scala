@@ -6,9 +6,9 @@ object Manifest {
     import util.Failure
     import util.Try
     def apply(location: java.io.File): util.Try[Manifest] = {
-        val content = scala.io.Source.fromFile(location, "ISO-8859-1").mkString
-        parse(content) flatMap { encoded => 
-            Manifest(encoded, hash(content))
+        val content = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(location.getPath))
+        parse(new String(content, "ISO-8859-1")) flatMap { encoded => 
+            Manifest(encoded, infoHash(content))
         }
     }
 
@@ -47,7 +47,8 @@ object Manifest {
                     case (name, pieceLength, length, files) =>
                         f(s"""Can not determine structure of 'manifest.info':
                                 name: ${name}, pieceLength: ${pieceLength},
-                                length: ${length}, files: ${files}""")
+                                length: ${length}, files: ${files}
+                                available keys: ${info.keys}""")
                 }
             case e => f(s"Manifest 'info' expected to be dictionary, but [${e}] found.")
         }
