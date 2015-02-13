@@ -7,6 +7,26 @@ object Bencoding {
   case class BList(value: Seq[Bencode]) extends Bencode
   case class BDictionary(value: Map[String, Bencode]) extends Bencode
 
+  object BString {
+    def apply(s: Seq[Byte]): BString = {
+      BString(new String(s.toArray, "ISO-8859-1"))
+    }
+  }
+
+  object TextString {
+    def unapply(x: Bencode) = x match {
+      case BString(str) => Some(str)
+      case _ => None
+    }
+  }
+  
+  object BinaryString {
+    def unapply(x: Bencode) = x match {
+      case BString(str) => Some(str.getBytes("ISO-8859-1"))
+      case _ => None
+    }
+  }
+
   import scala.util.parsing.combinator._
 
   object Parser extends JavaTokenParsers {
