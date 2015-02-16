@@ -20,22 +20,24 @@ object Peer {
   }
 }
 
-object Message {
-  sealed class Message
+object PeerMessage {
+  sealed class PeerMessage
 
-  case object KeepAlive extends Message
-  case object Choke extends Message
-  case object Unchoke extends Message
-  case object Interested extends Message
-  case object NotInterested extends Message
-  case class Have(pieceIndex: Int) extends Message
-  case class Bitfield(data: Seq[Byte]) extends Message
-  case class Request(index: Int, begin: Int, length: Int) extends Message
-  case class Piece(index: Int, begin: Int, block: Seq[Byte]) extends Message
-  case class Cancel(index: Int, begin: Int, length: Int) extends Message
-  case class Port(port: Int) extends Message
+  case object KeepAlive extends PeerMessage
+  case object Choke extends PeerMessage
+  case object Unchoke extends PeerMessage
+  case object Interested extends PeerMessage
+  case object NotInterested extends PeerMessage
+  case class Have(pieceIndex: Int) extends PeerMessage
+  case class Bitfield(data: Seq[Byte]) extends PeerMessage
+  case class Request(index: Int, begin: Int, length: Int) extends PeerMessage
+  case class Piece(index: Int, begin: Int, block: Seq[Byte]) extends PeerMessage
+  case class Cancel(index: Int, begin: Int, length: Int) extends PeerMessage
+  case class Port(port: Int) extends PeerMessage
 
-  def unapply(x: ByteString): Option[Message] = {
+
+
+  def unapply(x: ByteString): Option[PeerMessage] = {
     def takeInt(bs: ByteString) = {
       val (intRaw, rest) = bs.splitAt(4)
       val int = java.nio.ByteBuffer.wrap(intRaw.toArray).getInt()
@@ -78,32 +80,37 @@ object Message {
   }
 }
 
-class Peer(id: String, manifest: Manifest, remote: Address) extends Actor {
-  import Tcp._
-  val client = context.actorOf(Props(classOf[Client], remote, self), "client-" + remote.getHostString)
+sealed trait NetworkMessage
+case object ConnectFailed
+case object Connected
+case object ConnectionClosed
+case object WriteFailed
 
-  var hsResponce:Option[Seq[Byte]] = None
+class Peer(id: String, manifest: Manifest, remote: Address) extends Actor {
+  val client = context.actorOf(Props(classOf[NetworkConnection], remote, self), "client-" + remote.getHostString)
+
+  var hsResponce: Option[Seq[Byte]] = None
 
   def receive = {
-    case Connected(r, l) =>
+    case Connected =>
       val hs = Peer.handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
       sender() ! ByteString(hs.toArray)
     case c: ByteString =>
       hsResponce = Some(c)
-      println ("handshaked")
       context become handshaked
   }
 
   def handshaked: Receive = {
     case c: ByteString => c match {
-      case Message(m) => println("RECEIVED MSG: " + m)
+      case PeerMessage(m) => println("RECEIVED MSG: " + m)
     }
     case x => println(x)
   }
 }
 
-class Client(remote: Address, listener: ActorRef) extends Actor {
-  import Tcp._
+
+class NetworkConnection(remote: Address, listener: ActorRef) extends Actor {
+  import Tcp.{Connected => TcpConnected, _}
   import context.system
  
   IO(Tcp) ! Connect(remote)
@@ -113,7 +120,7 @@ class Client(remote: Address, listener: ActorRef) extends Actor {
       listener ! "connect failed"
       context stop self
  
-    case c @ Connected(remote, local) =>
+    case c @ TcpConnected(remote, local) =>
       listener ! c
       val connection = sender()
       connection ! Register(self)
