@@ -5,8 +5,9 @@ libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % 
 
 resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
  
-libraryDependencies +=
-  "com.typesafe.akka" %% "akka-actor" % "2.3.9"
+libraryDependencies ++= Seq(
+  "com.typesafe.akka" %% "akka-actor" % "2.3.9",
+  "com.typesafe.akka" %% "akka-testkit" % "2.3.9")
 
 libraryDependencies += "org.scalatest" % "scalatest_2.11" % "2.2.1" % "test"
 

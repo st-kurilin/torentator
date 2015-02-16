@@ -118,6 +118,10 @@ object Bencoding {
     }
     r
   }
+
+  def getBytes(str: String) = {
+    str.getBytes("ISO-8859-1")
+  }
 }
 
 
