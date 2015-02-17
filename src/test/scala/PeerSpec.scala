@@ -70,11 +70,24 @@ class PeerPoorSpec extends FlatSpec with Matchers {
 
 class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
+  import akka.testkit.TestProbe
  
   def this() = this(ActorSystem("PeerSpec"))
+  lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
+  lazy val trackerId = "ABCDEFGHIJKLMNOPQRST"
  
   override def afterAll {
     TestKit.shutdownActorSystem(system)
+  }
+
+  "Peer" must {
+    "sends hanshake just after creation" in {
+      var expectedHandshake = Peer.handshakeMessage(trackerId.getBytes, manifest)
+      val connection = TestProbe()
+      val peer = system.actorOf(Peer.props(trackerId, manifest, connection.ref))
+
+      connection.expectMsg(expectedHandshake)  
+    }
   }
 }
 

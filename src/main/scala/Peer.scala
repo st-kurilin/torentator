@@ -6,8 +6,8 @@ import akka.util.ByteString
 import java.net.{InetSocketAddress => Address}
 
 object Peer {
-  def props(id: String, manifest: Manifest, remote: Address) = 
-    Props(classOf[Peer], id, manifest, remote)
+  def props(id: String, manifest: Manifest, connection: ActorRef) = 
+    Props(classOf[Peer], id, manifest, connection)
 
   def handshakeMessage(peerId: Seq[Byte], manifest: Manifest): Seq[Byte] = {
     require(peerId.length == 20)
@@ -109,21 +109,14 @@ object PeerMessage {
   }
 }
 
-sealed trait NetworkMessage
-case object ConnectFailed
-case object Connected
-case object ConnectionClosed
-case object WriteFailed
-
-class Peer(id: String, manifest: Manifest, remote: Address) extends Actor {
-  val client = context.actorOf(Props(classOf[NetworkConnection], remote, self), "client-" + remote.getHostString)
+class Peer(id: String, manifest: Manifest, connection: ActorRef) extends Actor {
+  val client = connection
 
   var hsResponce: Option[Seq[Byte]] = None
+  val hs = Peer.handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
+  connection ! ByteString(hs.toArray)
 
   def receive = {
-    case Connected =>
-      val hs = Peer.handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
-      sender() ! ByteString(hs.toArray)
     case c: ByteString =>
       hsResponce = Some(c)
       context become handshaked
@@ -138,34 +131,34 @@ class Peer(id: String, manifest: Manifest, remote: Address) extends Actor {
 }
 
 
-class NetworkConnection(remote: Address, listener: ActorRef) extends Actor {
-  import Tcp.{Connected => TcpConnected, _}
+class NetworkConnection(remote: Address) extends Actor {
+  import Tcp._
   import context.system
+
+  val listener: ActorRef = context.parent
  
   IO(Tcp) ! Connect(remote)
  
-  def receive = {
+  def receive = connecting(List())
+
+  def connecting(msgQueue: List[Any]): Receive = {
+    case c @ Connected(remote, local) =>
+      for (m <- msgQueue) self ! m
+      context become connected
     case CommandFailed(_: Connect) =>
-      listener ! "connect failed"
-      context stop self
- 
-    case c @ TcpConnected(remote, local) =>
-      listener ! c
-      val connection = sender()
-      connection ! Register(self)
-      context become {
-        case data: ByteString =>
-          connection ! Write(data)
-        case CommandFailed(w: Write) =>
-          // O/S buffer was full
-          listener ! "write failed"
-        case Received(data) =>
-          listener ! data
-        case "close" =>
-          connection ! Close
-        case _: ConnectionClosed =>
-          listener ! "connection closed"
-          context stop self
-      }
+      throw new RuntimeException("Connection failed")
+    case x => context become connecting(x :: msgQueue)
   }
+
+  def connected: Receive = {
+    case data: ByteString =>
+      context.parent ! Write(data)
+    case CommandFailed(w: Write) =>
+      // O/S buffer was full
+      throw new RuntimeException("Write failed")
+    case Received(data) =>
+      listener ! data
+    case _: ConnectionClosed =>
+      context stop self
+  }  
 }
