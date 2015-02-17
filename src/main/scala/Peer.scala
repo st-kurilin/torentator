@@ -21,7 +21,7 @@ object Peer {
 }
 
 object PeerMessage {
-  sealed class PeerMessage
+  sealed trait PeerMessage
 
   case object KeepAlive extends PeerMessage
   case object Choke extends PeerMessage
@@ -47,35 +47,64 @@ object PeerMessage {
     def readInt(bs: ByteString): Int = {
       takeInt(bs)._1
     }
+
     val (length, idAndData) = takeInt(x)
+    val (id, data) = idAndData.splitAt(1)
     if (length == 0) Some(KeepAlive)
+    else if (idAndData.length != length) None
     else {
-      val (id, data) = idAndData.splitAt(1)
-      require(data.length == length - 1)  
-      Some(id(0) match {
+      val parsed: PartialFunction[Int, PeerMessage] = {
         case 0 => Choke
         case 1 => Unchoke
         case 2 => Interested
         case 3 => NotInterested
-        case 4 => new Have(readInt(data))
+        case 4 if data.length == 4 => new Have(readInt(data))
         case 5 => new Bitfield(data)
-        case 6 => 
-          require(data.length == 13)
+        case 6  if data.length == 12 => 
           val parsed = data.grouped(4).map(readInt(_)).toArray
           val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
           new Request(index, begin, length)
-        case 7 =>
+        case 7 if data.length > 9 =>
           val (indexAndBegin, block) = data.splitAt(8)
           val (index, begin) = takeInt(indexAndBegin)
           new Piece(index, readInt(begin), block)
-        case 8 =>
+        case 8 if data.length == 12 =>
           val parsed = data.grouped(4).map(readInt(_)).toArray
           val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
           new Cancel(index, begin, length)
-        case 9 =>
-          require(data.length == 3)
-          new Port(readInt(data))
-      })
+        case 9 if data.length == 2 =>
+          new Port(readInt(Seq(0, 0).map(_.toByte) ++ data))
+      }
+      parsed.lift(id(0))
+    }
+  }
+
+  object ByteString {
+    def intToByteArray(int: Int, size: Int = 4): Seq[Byte] = 
+      java.nio.ByteBuffer.allocate(4).putInt(int).array().drop(4 - size)
+    def seq(ints: Int*) = ints.map(_.toByte)
+
+    def unapply(x: PeerMessage): Option[ByteString] = {
+      val known: PartialFunction[PeerMessage, Seq[Byte]] = {
+        case KeepAlive => seq(0, 0, 0, 0)
+        case Choke => seq(0, 0, 0, 1, 0)
+        case Unchoke => seq(0, 0, 0, 1, 1)
+        case Interested => seq(0, 0, 0, 1, 2)
+        case NotInterested => seq(0, 0, 0, 1, 3)
+        case Have(x) => seq(0, 0, 0, 5, 4) ++ intToByteArray(x)
+        case Bitfield(data) => intToByteArray(data.length + 1) ++
+          seq(5) ++ data
+        case Request(index, begin, length) => seq(0, 0, 0, 13, 6) ++ 
+          intToByteArray(index) ++ intToByteArray(begin) ++
+          intToByteArray(length)
+        case Piece(index, begin, block) => intToByteArray(block.length + 9) ++
+          seq(7) ++ intToByteArray(index) ++ intToByteArray(begin) ++ block
+        case Cancel(index, begin, length) => seq(0, 0, 0, 13, 8) ++ 
+          intToByteArray(index) ++ intToByteArray(begin) ++
+          intToByteArray(length)
+        case Port(x) => seq(0, 0, 0, 3, 9) ++ intToByteArray(x, 2)
+      }
+      known.andThen(res => akka.util.ByteString(res.toArray)).lift(x)
     }
   }
 }
