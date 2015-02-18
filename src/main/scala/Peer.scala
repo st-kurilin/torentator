@@ -6,7 +6,7 @@ import akka.util.ByteString
 import java.net.{InetSocketAddress => Address}
 
 object Peer {
-  def props(id: String, manifest: Manifest, connection: ActorRef) = 
+  def props(id: String, manifest: Manifest, connection: Props) = 
     Props(classOf[Peer], id, manifest, connection)
 
   def handshakeMessage(peerId: Seq[Byte], manifest: Manifest): Seq[Byte] = {
@@ -47,7 +47,7 @@ object PeerMessage {
     def readInt(bs: ByteString): Int = {
       takeInt(bs)._1
     }
-
+    if (x(0) == -1) return Some(KeepAlive)
     val (length, idAndData) = takeInt(x)
     val (id, data) = idAndData.splitAt(1)
     if (length == 0) Some(KeepAlive)
@@ -64,7 +64,7 @@ object PeerMessage {
           val parsed = data.grouped(4).map(readInt(_)).toArray
           val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
           new Request(index, begin, length)
-        case 7 if data.length > 9 =>
+        case 7 if data.length > 8 =>
           val (indexAndBegin, block) = data.splitAt(8)
           val (index, begin) = takeInt(indexAndBegin)
           new Piece(index, readInt(begin), block)
@@ -109,56 +109,78 @@ object PeerMessage {
   }
 }
 
-class Peer(id: String, manifest: Manifest, connection: ActorRef) extends Actor {
-  val client = connection
+class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor {
+  import PeerMessage.{ByteString => PByteString, _}
+  val connection = context.actorOf(connectionProps, "connection")
 
   var hsResponce: Option[Seq[Byte]] = None
   val hs = Peer.handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
-  connection ! ByteString(hs.toArray)
+  connection ! ByteString(hs.toArray)    
 
   def receive = {
     case c: ByteString =>
       hsResponce = Some(c)
       context become handshaked
+      send(Interested)
+    case x =>
+      
+      println("???5" + x)
   }
 
   def handshaked: Receive = {
     case c: ByteString => c match {
-      case PeerMessage(m) => println("RECEIVED MSG: " + m)
+      case PeerMessage(m) => 
+      println("RECEIVED MSG: " + m)
+      m match {
+        case Unchoke => send(Request(1, 0, 1024))
+        case _ => 
+      }
+      
     }
     case x => println(x)
+  }
+  def send(msg: PeerMessage) = msg match {
+    case PByteString(bytes) => connection ! bytes
   }
 }
 
 
+
 class NetworkConnection(remote: Address) extends Actor {
+ 
   import Tcp._
   import context.system
-
-  val listener: ActorRef = context.parent
- 
+  val listener = context.parent
   IO(Tcp) ! Connect(remote)
  
-  def receive = connecting(List())
+  def receive = connecting(List.empty)
 
-  def connecting(msgQueue: List[Any]): Receive = {
-    case c @ Connected(remote, local) =>
-      for (m <- msgQueue) self ! m
-      context become connected
+  def connecting(msgQueue: List[Any]) : Receive = {
     case CommandFailed(_: Connect) =>
-      throw new RuntimeException("Connection failed")
-    case x => context become connecting(x :: msgQueue)
+      context stop self
+      throw new RuntimeException("connect failed")
+ 
+    case c @ Connected(remote, local) =>
+      val connection = sender()
+      connection ! Register(self)
+      context become connected(connection)
+      for (m <- msgQueue) self ! m
+    case x =>
+      context become connecting(x :: msgQueue)
   }
 
-  def connected: Receive = {
-    case data: ByteString =>
-      context.parent ! Write(data)
+  def connected(connection: ActorRef): Receive = {
+    case data: ByteString => 
+      connection ! Write(data)
     case CommandFailed(w: Write) =>
       // O/S buffer was full
-      throw new RuntimeException("Write failed")
+      throw new RuntimeException("write failed")
     case Received(data) =>
       listener ! data
+    case "close" =>
+      connection ! Close
     case _: ConnectionClosed =>
+      listener ! "connection closed"
       context stop self
-  }  
+  }
 }

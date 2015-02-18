@@ -1,10 +1,8 @@
 package torentator
 
-import akka.actor.ActorSystem
-import akka.actor.Actor
-import akka.actor.Props
+
 import akka.util.ByteString
-import akka.testkit.{ TestActors, TestKit, ImplicitSender }
+
 import org.scalatest._
 import scala.concurrent.duration._
 
@@ -32,6 +30,8 @@ class PeerPoorSpec extends FlatSpec with Matchers {
         Request(258, 259, 16909060)),                 //<len=0013><id=6><index><begin><length>
       (Seq(0, 0, 0, 12, 7, 0, 0, 1, 2, 0, 0, 1, 3, 1, 2, 3) -> 
         Piece(258, 259, Seq(1, 2, 3).map(_.toByte))), //<len=0009+X><id=7><index><begin><block>
+      (Seq(0, 0, 0, 10, 7, 0, 0, 0, 1, 0, 0, 0, 0, 98) -> 
+        Piece(1, 0, Seq(98).map(_.toByte))), //<len=0009+X><id=7><index><begin><block>
       (Seq(0, 0, 0, 13, 8, 0, 0, 1, 2, 1, 3, 0, 1, 1, 2, 3, 4) -> 
         Cancel(258, 16973825, 16909060)),             //<len=0013><id=8><index><begin><length>
       (Seq(0, 0, 0, 3, 9, 1, 42) -> Port(298))        //<len=0003><id=9><listen-port>
@@ -68,9 +68,12 @@ class PeerPoorSpec extends FlatSpec with Matchers {
   }
 }
 
+import akka.actor.{Actor, ActorRef, Props, ActorSystem}
+import akka.testkit.{ TestActors, TestKit, ImplicitSender }
 class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
   import akka.testkit.TestProbe
+  import scala.concurrent.duration._
  
   def this() = this(ActorSystem("PeerSpec"))
   lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
@@ -84,10 +87,23 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
     "sends hanshake just after creation" in {
       var expectedHandshake = Peer.handshakeMessage(trackerId.getBytes, manifest)
       val connection = TestProbe()
-      val peer = system.actorOf(Peer.props(trackerId, manifest, connection.ref))
+      val peer = system.actorOf(Peer.props(trackerId, manifest, Props(new Forwarder(connection.ref))))
 
       connection.expectMsg(expectedHandshake)  
     }
+    // for development only
+    // "do it for real" in {
+    //   val connectionProps = Props(classOf[NetworkConnection], new java.net.InetSocketAddress("84.123.53.8", 51413))
+    //   val peer = system.actorOf(Peer.props(trackerId, manifest, connectionProps), "peer") 
+    //   TestProbe().expectNoMsg(15.seconds)
+    // }
+  }
+  class Forwarder(target: ActorRef) extends Actor {
+    def receive = {
+      case m => target forward m
+    }
   }
 }
+
+
 
