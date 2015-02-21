@@ -5,12 +5,12 @@ object Tracker {
   import Bencoding._
   import java.net.InetSocketAddress
   def get(url: String) = scala.io.Source.fromURL(url, "ISO-8859-1").mkString
-
+  val id = "ABCDEFGHIJKLMNOPQRST"
 
   def announce(manifest: Manifest): Try[Announce] = {
     val hash = Bencoding.urlEncode(manifest.hash)
     val rest = "port=6881&uploaded=0&downloaded=0&left=727955456&event=started&numwant=100&no_peer_id=1&compact=1"
-    val id = "ABCDEFGHIJKLMNOPQRST"
+    
     // sample http://torrent.ubuntu.com:6969/announce
     //?info_hash=%16%19%EC%C97%3C69%F4%EE%3E%26%168%F2%9B3%A6%CB%D6
     //&peer_id=ABCDEFGHIJKLMNOPQRST&port=6881&uploaded=0&downloaded=0&left=727955456

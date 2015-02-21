@@ -1,9 +1,11 @@
 package torentator
 
-import akka.actor.{ Actor, ActorRef, Props }
+import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy }
+import akka.actor.SupervisorStrategy._
 import akka.io.{ IO, Tcp }
 import akka.util.ByteString
 import java.net.{InetSocketAddress => Address}
+
 
 object Peer {
   def props(id: String, manifest: Manifest, connection: Props) = 
@@ -18,6 +20,9 @@ object Peer {
     val infoHash = manifest.hash
     pstrlen ++ pstr ++ reserved ++ infoHash ++ peerId
   }
+
+  case class DownloadPiece(index: Int, lenght: Long)
+  case class PieceDownloaded(index: Int, content: Seq[Byte])
 }
 
 object PeerMessage {
@@ -51,8 +56,9 @@ object PeerMessage {
     val (length, idAndData) = takeInt(x)
     val (id, data) = idAndData.splitAt(1)
     if (length == 0) Some(KeepAlive)
-    else if (idAndData.length != length) None
-    else {
+    else if (idAndData.length != length) {
+      None
+    } else {
       val parsed: PartialFunction[Int, PeerMessage] = {
         case 0 => Choke
         case 1 => Unchoke
@@ -110,34 +116,72 @@ object PeerMessage {
 }
 
 class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor {
+  import Peer.DownloadPiece
   import PeerMessage.{ByteString => PByteString, _}
+
+  override val supervisorStrategy = AllForOneStrategy() {case e => Escalate}
   val connection = context.actorOf(connectionProps, "connection")
 
   var hsResponce: Option[Seq[Byte]] = None
   val hs = Peer.handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
   connection ! ByteString(hs.toArray)    
 
+  var assigment: Option[DownloadPiece] = None
+  var choked = true
+
   def receive = {
+    case c: DownloadPiece =>
+      assigment = Some(c)
     case c: ByteString =>
       hsResponce = Some(c)
       context become handshaked
       send(Interested)
-    case x =>
-      
-      println("???5" + x)
   }
 
   def handshaked: Receive = {
     case c: ByteString => c match {
       case PeerMessage(m) => 
-      println("RECEIVED MSG: " + m)
-      m match {
-        case Unchoke => send(Request(1, 0, 1024))
-        case _ => 
-      }
-      
+        println("RECEIVED MSG: " + m)
+        m match {
+          case Unchoke => 
+            choked = false
+            if (assigment != None) startDownload()
+            
+          case c: DownloadPiece =>
+            assigment = Some(c)
+            if (!choked) startDownload()
+          case _ => 
+        }
     }
-    case x => println(x)
+  }
+
+  var old: Option[ByteString] = None
+  def startDownload(downloaded: Int = 0): Unit = {
+    def handleMsd(msg : PeerMessage) = msg match {
+      case KeepAlive => 
+      case Piece(index, begin, block) =>
+        println(s"got i:${index} b:${begin} size:${block.length}")
+        startDownload(begin + block.length)
+      case b: Bitfield => println("received Bitfield")
+      case _ => println(s"startDownload got msg: ${msg}")
+    }
+
+    send(Request(1, downloaded, 1024))
+    context become {
+      case PeerMessage(m) => handleMsd(m)
+      case bs: ByteString => 
+        old match {
+          case Some(o) =>
+            (o ++ bs) match {
+              case PeerMessage(m) =>
+                handleMsd(m)
+                old = None
+              case x => old = Some(x)
+            }
+          case None => 
+            old = Some(bs)
+        }
+    }
   }
   def send(msg: PeerMessage) = msg match {
     case PByteString(bytes) => connection ! bytes
@@ -147,7 +191,6 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
 
 
 class NetworkConnection(remote: Address) extends Actor {
- 
   import Tcp._
   import context.system
   val listener = context.parent
@@ -158,7 +201,7 @@ class NetworkConnection(remote: Address) extends Actor {
   def connecting(msgQueue: List[Any]) : Receive = {
     case CommandFailed(_: Connect) =>
       context stop self
-      throw new RuntimeException("connect failed")
+      throw new RuntimeException("connect failed to " + remote)
  
     case c @ Connected(remote, local) =>
       val connection = sender()
