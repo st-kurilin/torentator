@@ -4,7 +4,17 @@ object Tracker {
   import util.{Try, Success, Failure}
   import Bencoding._
   import java.net.InetSocketAddress
-  def get(url: String) = scala.io.Source.fromURL(url, "ISO-8859-1").mkString
+  def get(url: String, attempt: Int = 0): String = {
+    try {
+      return scala.io.Source.fromURL(url, "ISO-8859-1").mkString
+    } catch {
+      case e: Throwable if attempt > 10 => throw e
+      case e: Throwable => 
+        Thread.sleep(100)
+        get(url, attempt + 1)
+    }
+  }
+    
   val id = "ABCDEFGHIJKLMNOPQRST"
 
   def announce(manifest: Manifest): Try[Announce] = {
@@ -35,12 +45,12 @@ object Tracker {
     }    
   }
 
-  def parseHostAndPort(bytes: Seq[Byte]): InetSocketAddress = {
-    val shortForm = bytes
+  def parseHostAndPort(shortForm: Seq[Byte]): InetSocketAddress = {
+    def parseInt(b1: Byte, b2: Byte) = java.nio.ByteBuffer.wrap(Array(b1, b2)).getChar.toInt
     require(shortForm.size == 6)
-    val ipNumbers = for (number <- 1 to 4) yield shortForm(number - 1).toInt
+    val ipNumbers = for (number <- 1 to 4) yield parseInt(0, shortForm(number - 1))
     val ip = ipNumbers.mkString(".")
-    val port = java.nio.ByteBuffer.wrap(Array(shortForm(4).toByte, shortForm(5).toByte)).getChar.toInt
+    val port = parseInt(shortForm(4), shortForm(5))
     new InetSocketAddress(ip, port)
   }
 

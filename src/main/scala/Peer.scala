@@ -1,6 +1,6 @@
 package torentator
 
-import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy }
+import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
 import akka.io.{ IO, Tcp }
 import akka.util.ByteString
@@ -21,8 +21,10 @@ object Peer {
     pstrlen ++ pstr ++ reserved ++ infoHash ++ peerId
   }
 
-  case class DownloadPiece(index: Int, lenght: Long)
+  case class DownloadPiece(index: Int, begin: Int, length: Long)
+  case class PiecePartiallyDownloaded(index: Int, length: Long, content: Seq[Byte])
   case class PieceDownloaded(index: Int, content: Seq[Byte])
+  case class CanNotDownload(reason: String) extends RuntimeException
 }
 
 object PeerMessage {
@@ -52,6 +54,7 @@ object PeerMessage {
     def readInt(bs: ByteString): Int = {
       takeInt(bs)._1
     }
+    if (x.length < 4) return None
     if (x(0) == -1) return Some(KeepAlive)
     val (length, idAndData) = takeInt(x)
     val (id, data) = idAndData.splitAt(1)
@@ -118,8 +121,14 @@ object PeerMessage {
 class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor {
   import Peer.DownloadPiece
   import PeerMessage.{ByteString => PByteString, _}
+  import scala.language.postfixOps
+  import scala.concurrent.duration._
+  import context.dispatcher
 
-  override val supervisorStrategy = AllForOneStrategy() {case e => Escalate}
+  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {case e => Escalate}
+
+  val Tick = "tick"
+  var quality = 1000
   val connection = context.actorOf(connectionProps, "connection")
 
   var hsResponce: Option[Seq[Byte]] = None
@@ -129,58 +138,98 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   var assigment: Option[DownloadPiece] = None
   var choked = true
 
+  context.system.scheduler.schedule(1 seconds, 3 seconds, self, Tick)
+
   def receive = {
     case c: DownloadPiece =>
       assigment = Some(c)
+      quality = 5
     case c: ByteString =>
       hsResponce = Some(c)
+      quality += 1
       context become handshaked
-      send(Interested)
+      //send(Interested)
+    case Tick if quality > 0 => quality -= 1; //println(s"0assigment ${assigment};  quality: ${quality}; //${self}")
+    case Tick => throw new Peer.CanNotDownload("Failed due timeout before handshake")   
   }
 
   def handshaked: Receive = {
     case c: ByteString => c match {
       case PeerMessage(m) => 
-        println("RECEIVED MSG: " + m)
         m match {
           case Unchoke => 
             choked = false
-            if (assigment != None) startDownload()
-            
+            quality += 2
+            if (assigment != None) download()
           case c: DownloadPiece =>
             assigment = Some(c)
-            if (!choked) startDownload()
-          case _ => 
+            quality = 5
+            if (!choked) download()
+          //case m: KeepAlive =>
+          case m: Bitfield => 
+          case Choke => quality -= 2
+          case KeepAlive =>
+          case m =>  println("RECEIVED MSG: " + m) 
         }
+      case _ => 
     }
+    case Tick if quality > 0 => quality -= 1; //println(s"1assigment ${assigment};  quality: ${quality} //${self}")
+    case Tick => throw new Peer.CanNotDownload("Failed due timeout after handshake, but before download started")   
   }
 
+  var data = Seq.empty[Byte]
   var old: Option[ByteString] = None
-  def startDownload(downloaded: Int = 0): Unit = {
+  var done = false
+  def download(downloaded: Int = 0): Unit = {
+    val assigment = this.assigment.get
+
     def handleMsd(msg : PeerMessage) = msg match {
-      case KeepAlive => 
+      case KeepAlive =>
+      case Choke => 
       case Piece(index, begin, block) =>
         println(s"got i:${index} b:${begin} size:${block.length}")
-        startDownload(begin + block.length)
+        data = data ++ block
+        quality += 2
+        download(begin + block.length)
       case b: Bitfield => println("received Bitfield")
       case _ => println(s"startDownload got msg: ${msg}")
     }
+    require(downloaded <= assigment.length)
+    if (downloaded == assigment.length) {
+      context.parent ! Peer.PieceDownloaded(assigment.index, data)
+      done = true
+      quality += 2
+      println("DONE")
+      context become { case _ => }
+    } else {
+      send(Request(assigment.index, downloaded, java.lang.Math.min(16384, (assigment.length - downloaded).toInt)))
+      context become {
+        case PeerMessage(m) =>
+          handleMsd(m)
+        case bs: ByteString => 
+          old match {
+            case Some(o) =>
+              (o ++ bs) match {
+                case PeerMessage(m) =>
+                  handleMsd(m)
+                  old = None
+                case x =>
+                  old = Some(x)
+                  //println(s"squashing during ${assigment.index}")
+              }
+            case None => 
+              old = Some(bs)
+          }
 
-    send(Request(1, downloaded, 1024))
-    context become {
-      case PeerMessage(m) => handleMsd(m)
-      case bs: ByteString => 
-        old match {
-          case Some(o) =>
-            (o ++ bs) match {
-              case PeerMessage(m) =>
-                handleMsd(m)
-                old = None
-              case x => old = Some(x)
-            }
-          case None => 
-            old = Some(bs)
-        }
+        case Tick if quality >= 0 =>
+          quality-= 1
+          println(s"tick piece: ${assigment.index}; downloaded: ${downloaded}; quality: ${quality}")
+        case Tick if !done & quality < 0 =>
+          println(s"tick piece: ${assigment.index}; quality: ${quality}; ask for replacement")
+          context.parent ! Peer.PiecePartiallyDownloaded(assigment.index, downloaded, data)
+          context become { case _ => }
+        case Tick => println(s"tick piece: ${assigment.index}; quality: ${quality}; done: ${done}")
+      }
     }
   }
   def send(msg: PeerMessage) = msg match {
@@ -193,6 +242,9 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
 class NetworkConnection(remote: Address) extends Actor {
   import Tcp._
   import context.system
+
+  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {case e => Escalate}
+
   val listener = context.parent
   IO(Tcp) ! Connect(remote)
  
@@ -201,7 +253,7 @@ class NetworkConnection(remote: Address) extends Actor {
   def connecting(msgQueue: List[Any]) : Receive = {
     case CommandFailed(_: Connect) =>
       context stop self
-      throw new RuntimeException("connect failed to " + remote)
+      throw new Peer.CanNotDownload("connect failed to " + remote)
  
     case c @ Connected(remote, local) =>
       val connection = sender()
@@ -217,7 +269,7 @@ class NetworkConnection(remote: Address) extends Actor {
       connection ! Write(data)
     case CommandFailed(w: Write) =>
       // O/S buffer was full
-      throw new RuntimeException("write failed")
+      throw new Peer.CanNotDownload("write failed")
     case Received(data) =>
       listener ! data
     case "close" =>

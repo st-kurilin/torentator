@@ -1,13 +1,14 @@
 package torentator
 
 
-import akka.util.ByteString
 
 import org.scalatest._
 import scala.concurrent.duration._
 
  
 class PeerPoorSpec extends FlatSpec with Matchers {
+  import akka.util.ByteString
+
   "Peer" should "create proper handshake" in {
     val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
     var msg = Peer.handshakeMessage("ABCDEFGHIJKLMNOPQRST".getBytes, manifest)
@@ -68,12 +69,20 @@ class PeerPoorSpec extends FlatSpec with Matchers {
   }
 }
 
-import akka.actor.{Actor, ActorRef, Props, ActorSystem}
-import akka.testkit.{ TestActors, TestKit, ImplicitSender }
+import akka.actor._
+import akka.testkit._
+import akka.pattern.{ask, pipe}
+import akka.util.Timeout
+import akka.actor.SupervisorStrategy._
+
 class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
   import akka.testkit.TestProbe
   import scala.concurrent.duration._
+  import akka.util.{ByteString => BString}
+
+  implicit val timeout = Timeout(1 second)
+  import system.dispatcher
  
   def this() = this(ActorSystem("PeerSpec"))
   lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
@@ -83,6 +92,33 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
     TestKit.shutdownActorSystem(system)
   }
 
+  val exceptionListener = TestProbe()
+  val messagesListener = TestProbe()
+  val superviser = system.actorOf(Props(new Superviser(exceptionListener.ref, messagesListener.ref)))
+
+  // val giveDownloadTask: PartialFunction[util.Try[ActorRef], Unit] = {
+  //   case util.Success(p) => p ! Peer.DownloadPiece(0, 100500)
+  // }
+  val giveDownloadTask: PartialFunction[ActorRef, Unit] = { case r =>
+    r ! Peer.DownloadPiece(0, 0, 100500)
+  }
+
+  def messageAsBytes(msg: PeerMessage.PeerMessage) = {
+    PeerMessage.ByteString.unapply(msg).get
+  }
+
+  def byteArray(size: Int) = List.fill(size)(7).map(_.toByte)
+
+  def throwIfAnyReceived: PartialFunction[Any, Unit] = { case x => throw new RuntimeException(x.toString)  }
+
+  def newPeer(connection: Props) = {
+    val peer = superviser ? Peer.props(trackerId, manifest, connection)
+    peer onFailure {
+      case f => fail(f)
+    }
+    peer.mapTo[ActorRef]
+  } 
+
   "Peer" must {
     "sends hanshake just after creation" in {
       var expectedHandshake = Peer.handshakeMessage(trackerId.getBytes, manifest)
@@ -91,12 +127,130 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
       connection.expectMsg(expectedHandshake)  
     }
-    // for development only
-    // "do it for real" in {
-    //   val connectionProps = Props(classOf[NetworkConnection], new java.net.InetSocketAddress("84.123.53.8", 51413))
-    //   val peer = system.actorOf(Peer.props(trackerId, manifest, connectionProps), "peer") 
-    //   TestProbe().expectNoMsg(15.seconds)
-    // }
+
+    "escalates network exceptions" in {
+      object NetworkException extends RuntimeException
+      val connectionMock = Props(new Actor {
+        def receive = { case _ => throw NetworkException }
+      })
+
+      newPeer(connectionMock)
+
+      exceptionListener.expectMsg(NetworkException)
+    }
+
+    "should not send any messages if was not unchoked" in {
+      val connectionMock = Props(new Actor {
+        def receive = { case hs: BString =>
+            sender() ! hs
+            context become throwIfAnyReceived
+        }
+      })
+      
+      newPeer(connectionMock) onSuccess giveDownloadTask
+
+      exceptionListener.expectNoMsg()
+    }
+
+    "should not send any messages if didn't receive task" in {
+      val connectionMock = Props(new Actor {
+        def receive = { case hs: BString =>
+            sender() ! hs
+            sender() ! messageAsBytes(PeerMessage.Unchoke)
+            context become throwIfAnyReceived
+        }
+      })
+
+      newPeer(connectionMock)
+
+      exceptionListener.expectNoMsg()
+    }
+
+    "should ask for block if unchoke is given and task is received" in {
+      var requestReceived = false
+      val connectionMock = Props(new Actor {
+        def receive = { case hs: BString =>
+            sender() ! hs
+            sender() ! messageAsBytes(PeerMessage.Unchoke)
+            context.setReceiveTimeout(1 second)
+            context become {
+              case PeerMessage(m) if (m match {
+                case r: PeerMessage.Request => true
+                case _ => false
+              }) => requestReceived = true
+              case ReceiveTimeout if requestReceived => 
+              case ReceiveTimeout => throw new RuntimeException("request was not received")
+              case x => throw new RuntimeException(x.toString)
+            }
+        }
+      })
+
+      newPeer(connectionMock) onSuccess giveDownloadTask
+
+      exceptionListener.expectNoMsg()
+    }
+
+    "should downlod piece if connection is nice" in {
+      val connectionMock = Props(new Actor {
+        def receive = { case hs: BString =>
+            sender() ! hs
+            sender() ! messageAsBytes(PeerMessage.Unchoke)
+            context become {
+              case PeerMessage(m) => m match {
+                case PeerMessage.Request(index, begin, length) =>
+                  sender() ! messageAsBytes(new PeerMessage.Piece(index, begin, byteArray(length)))
+                case _ => 
+              }
+            }
+        }
+      })
+
+      newPeer(connectionMock) onSuccess giveDownloadTask
+
+      exceptionListener.expectNoMsg()
+      messagesListener.expectMsgPF(1 second) {case Peer.PieceDownloaded(piece, data) =>
+        //assert (!data.isEmpty)
+      }
+    }
+
+    "should be able to handle splitted pieces" in {
+      val connectionMock = Props(new Actor {
+        def receive = { case hs: BString =>
+            sender() ! hs
+            sender() ! messageAsBytes(PeerMessage.Unchoke)
+            context become {
+              case PeerMessage(m) => m match {
+                case PeerMessage.Request(index, begin, length) =>
+                  val bytes = messageAsBytes(new PeerMessage.Piece(index, begin, byteArray(length)))
+                  val (msg1, msg2) = bytes splitAt 10
+                  require(msg1.length + msg2.length == bytes.length)
+                  sender() ! msg1 
+                  sender() ! msg2
+                case _ => 
+              }
+            }
+        }
+      })
+
+      newPeer(connectionMock) onSuccess giveDownloadTask
+
+      exceptionListener.expectNoMsg()
+      messagesListener.expectMsgPF(1 second) { case Peer.PieceDownloaded(piece, data) =>
+        assert (!data.isEmpty)
+      }
+    }
+  }
+  
+  class Superviser(exceptionsListener: ActorRef, messagesListener: ActorRef) extends Actor {
+    override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) { case e =>
+      exceptionsListener ! e
+      Stop
+    }
+    def receive = {
+      case (p: Props, name: String) => sender() ! context.actorOf(p, name)
+      case p: Props => sender() ! context.actorOf(p)
+      case m => messagesListener ! m
+    }
   }
   class Forwarder(target: ActorRef) extends Actor {
     def receive = {
