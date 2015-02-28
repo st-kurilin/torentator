@@ -135,21 +135,21 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   val hs = Peer.handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
   connection ! ByteString(hs.toArray)    
 
-  var assigment: Option[DownloadPiece] = None
+  var assigment: Option[(ActorRef, DownloadPiece)] = None
   var choked = true
 
   context.system.scheduler.schedule(1 seconds, 3 seconds, self, Tick)
 
   def receive = {
     case c: DownloadPiece =>
-      assigment = Some(c)
+      assigment = Some((sender -> c))
       quality = 5
     case c: ByteString =>
       hsResponce = Some(c)
       quality += 1
       context become handshaked
       //send(Interested)
-    case Tick if quality > 0 => quality -= 1; //println(s"0assigment ${assigment};  quality: ${quality}; //${self}")
+    case Tick if quality > 0 => quality -= 1
     case Tick => throw new Peer.CanNotDownload("Failed due timeout before handshake")   
   }
 
@@ -162,7 +162,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
             quality += 2
             if (assigment != None) download()
           case c: DownloadPiece =>
-            assigment = Some(c)
+            assigment = Some((sender -> c))
             quality = 5
             if (!choked) download()
           //case m: KeepAlive =>
@@ -173,7 +173,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
         }
       case _ => 
     }
-    case Tick if quality > 0 => quality -= 1; //println(s"1assigment ${assigment};  quality: ${quality} //${self}")
+    case Tick if quality > 0 => quality -= 1
     case Tick => throw new Peer.CanNotDownload("Failed due timeout after handshake, but before download started")   
   }
 
@@ -181,7 +181,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   var old: Option[ByteString] = None
   var done = false
   def download(downloaded: Int = 0): Unit = {
-    val assigment = this.assigment.get
+    val (listener, assigment) = this.assigment.get
 
     def handleMsd(msg : PeerMessage) = msg match {
       case KeepAlive =>
@@ -196,7 +196,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
     }
     require(downloaded <= assigment.length)
     if (downloaded == assigment.length) {
-      context.parent ! Peer.PieceDownloaded(assigment.index, data)
+      listener ! Peer.PieceDownloaded(assigment.index, data)
       done = true
       quality += 2
       println("DONE")
@@ -226,7 +226,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
           println(s"tick piece: ${assigment.index}; downloaded: ${downloaded}; quality: ${quality}")
         case Tick if !done & quality < 0 =>
           println(s"tick piece: ${assigment.index}; quality: ${quality}; ask for replacement")
-          context.parent ! Peer.PiecePartiallyDownloaded(assigment.index, downloaded, data)
+          listener ! Peer.PiecePartiallyDownloaded(assigment.index, downloaded, data)
           context become { case _ => }
         case Tick => println(s"tick piece: ${assigment.index}; quality: ${quality}; done: ${done}")
       }

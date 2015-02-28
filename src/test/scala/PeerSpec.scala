@@ -100,7 +100,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
   //   case util.Success(p) => p ! Peer.DownloadPiece(0, 100500)
   // }
   val giveDownloadTask: PartialFunction[ActorRef, Unit] = { case r =>
-    r ! Peer.DownloadPiece(0, 0, 100500)
+    r.tell(Peer.DownloadPiece(0, 0, 100500), superviser)
   }
 
   def messageAsBytes(msg: PeerMessage.PeerMessage) = {
@@ -240,7 +240,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       }
     }
   }
-  
+
   class Superviser(exceptionsListener: ActorRef, messagesListener: ActorRef) extends Actor {
     override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) { case e =>
       exceptionsListener ! e

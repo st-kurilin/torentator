@@ -2,23 +2,21 @@ package torentator
 
 import akka.actor.{ Actor, ActorRef, Props, OneForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
+import akka.pattern.ask
+import scala.concurrent.duration._
+import scala.concurrent.Future
 
 object Torrent {
+  case object AskForPeer
 }
 
 class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   import scala.concurrent.duration._
   import context.dispatcher
-  val Tick = "tick"
-  context.system.scheduler.schedule(1 seconds, 1 seconds, self, Tick)
+
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
-    case Peer.CanNotDownload (reason) => 
-      println(s"peer ${sender} will be replaced due ${reason}")
-      val failedPeer = sender()
-      if (tasksInProgress.contains(failedPeer)) {
-        val task = tasksInProgress(failedPeer)
-        tasks = task :: tasks
-      }
+    case e: Peer.CanNotDownload if peerOwners contains sender() =>
+      peerOwners(sender()) forward e
       Stop
     case e: Throwable =>
       println("------------------------")
@@ -33,8 +31,7 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   }
     
   val announce = Tracker.announce(manifest).get
-
-  val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt
+  val numberOfPieces = 3//java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt
 
   println("pieceLenght: " + manifest.pieceLenght)
   println("piece actual number: " + java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt)
@@ -42,42 +39,57 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   var oldPeersAddresses = Set.empty[java.net.InetSocketAddress]
   def newPeers(number: Int = numberOfPieces) = {
       if (number != 0) println(s"Creating ${number} peers")
-      val r = Tracker.announce(manifest).get.peers.
+      Tracker.announce(manifest).get.peers.
         filter(!oldPeersAddresses.contains(_)).take(number) map { address => 
         val addressEnscaped = address.toString.replaceAll("/", "")
         oldPeersAddresses = oldPeersAddresses + address
         context.actorOf(Peer.props(Tracker.id, manifest, Props(classOf[NetworkConnection], address)), s"peer:${addressEnscaped}")
     }
-    require(r.size == number)  
-    r
   }
 
-  var tasks = List.empty[Peer.DownloadPiece]
-  var tasksInProgress = Map.empty[ActorRef, Peer.DownloadPiece]
+  var peerOwners = Map.empty[ActorRef, ActorRef]
 
-  for (piece <- 0 until numberOfPieces) tasks = Peer.DownloadPiece(piece, 0, manifest.pieceLenght) :: tasks
+  for (piece <- 0 until numberOfPieces)
+    context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLenght))
 
   def receive: Receive = {
-    case Peer.PieceDownloaded(index, data) =>
-      for (i <- 0 to 15) println(s"!!!!!Piece ${index} downloaded!!!!")
-      if (tasks.size > 0) {
-        println ("current tasks: " + tasks.mkString("\n"))
-        println("----")  
-      }
-      
-      //sender() ! PoisonPill
-    case Peer.PiecePartiallyDownloaded(piece, downloaded, data) =>
-      println(s"replacing actor for piece ${piece} after ${downloaded} downloaded")
-      tasks = Peer.DownloadPiece(piece, downloaded.toInt, manifest.pieceLenght) :: tasks
-      //sender() ! PoisonPill
-    case Tick =>
-      if (tasks.size != 0) println ("current tasks: " + tasks.mkString("\n") + "---\n")
-      for ((task, peer) <- tasks zip newPeers(tasks.size)) {
-        println(s"assign ${task} to ${peer}")
-        tasksInProgress += (peer -> task)
-        peer ! task
-      }
-      tasks = List.empty
+    case Torrent.AskForPeer =>
+      val peer = newPeers(1).head
+      val owner = sender()
+      peerOwners += (peer -> owner)
+      owner ! peer
     case x => println("Torrent received" + x) 
+  }
+}
+
+class PieceHandler(piece: Int, totalSize: Long) extends Actor {
+  implicit val timeout = akka.util.Timeout(3 second)
+  import context.dispatcher
+
+  val torrent = context.parent
+
+  def newPeer: Future[ActorRef] = (torrent ? Torrent.AskForPeer).mapTo[ActorRef].recoverWith {
+   case f => println(s"failed on peer creation ${f}"); newPeer
+  }
+
+  def download(peer: Future[ActorRef], start: Int) = newPeer onSuccess { case peer =>
+    peer ! Peer.DownloadPiece(piece, start, totalSize)
+  }
+
+  var downloaded = 0
+
+  download(newPeer, downloaded)
+
+  def receive = {
+    case Peer.PieceDownloaded(index, data) =>
+      for (i <- 0 to 15) println(s"!!!!!Piece ${piece} downloaded!!!!")
+    case Peer.PiecePartiallyDownloaded(piece, downloaded, data) =>
+      require(this.downloaded <= downloaded)
+      this.downloaded = downloaded.toInt
+      download(newPeer, this.downloaded)
+    case Peer.CanNotDownload (reason) => 
+      println(s"peer ${sender} will be replaced due ${reason}")
+      download(newPeer, downloaded)
+      Stop
   }
 }
