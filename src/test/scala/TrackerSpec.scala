@@ -1,11 +1,12 @@
 package torentator
 
 import org.scalatest._
+import scala.concurrent.ExecutionContext.Implicits.global
 
 class TrackerSpec extends FlatSpec with Matchers {
   import Bencoding._
   import Tracker._
-  import util.{Success, Failure}
+  import util.{Try, Success, Failure}
 
   //https://wiki.theory.org/BitTorrent_Tracker_Protocol
   "Tracker" should "parse shorten peer" in {
@@ -49,10 +50,10 @@ class TrackerSpec extends FlatSpec with Matchers {
   it should "get announce from tracker" in {
     val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent"))
 
-    manifest.flatMap(announce(_)) match {
+    manifest.flatMap{case m => futureToTry(announce(m))} match {
         case Success(announce) =>
             assert (announce.interval !== 0)
-            announce.peers should not be empty
+            announce.peers should not be  empty
             println(announce.peers)
         case f => fail(f.toString)
     }
@@ -62,5 +63,9 @@ class TrackerSpec extends FlatSpec with Matchers {
   def newPeer(shortForm: Seq[Int]) = shortForm.map(_.toByte)
   def bencoded(p: Peer) = new String(p.toArray, "ISO-8859-1")
   def decoded(p: Peer) = parseHostAndPort(p)
+
+  import scala.concurrent._
+  import duration._
+  def futureToTry[T](f: Future[T]): Try[T] = Await.ready(f, Duration(10, SECONDS)).value.get
 
 }

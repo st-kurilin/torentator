@@ -4,7 +4,7 @@ import akka.actor.{ Actor, ActorRef, Props, OneForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
 import akka.pattern.ask
 import scala.concurrent.duration._
-import scala.concurrent.Future
+import scala.concurrent.{Future, Promise}
 
 object Torrent {
   case object AskForPeer
@@ -30,20 +30,43 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
     
-  val announce = Tracker.announce(manifest).get
   val numberOfPieces = 3//java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt
 
   println("pieceLenght: " + manifest.pieceLenght)
   println("piece actual number: " + java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt)
 
-  var oldPeersAddresses = Set.empty[java.net.InetSocketAddress]
-  def newPeers(number: Int = numberOfPieces) = {
-      if (number != 0) println(s"Creating ${number} peers")
-      Tracker.announce(manifest).get.peers.
-        filter(!oldPeersAddresses.contains(_)).take(number) map { address => 
-        val addressEnscaped = address.toString.replaceAll("/", "")
-        oldPeersAddresses = oldPeersAddresses + address
-        context.actorOf(Peer.props(Tracker.id, manifest, Props(classOf[NetworkConnection], address)), s"peer:${addressEnscaped}")
+  val Tick = "tick"
+  context.system.scheduler.schedule(1 seconds, 5 seconds, self, Tick)
+
+  val peers = new Iterator[Future[ActorRef]] {
+    type Address = java.net.InetSocketAddress
+    var used = Set.empty[Address]
+    def newAddresses: Future[List[Address]] = Tracker.announce(manifest).
+      map(_.peers.filter(!used.contains(_)).toList).recoverWith{case _ => newAddresses}
+    var addresses = List.empty[Address]
+
+    def updateAddresses = newAddresses onSuccess {
+      case res => addresses = res
+    }
+
+    def createPeer(address: Address) = {
+      val addressEnscaped = address.toString.replaceAll("/", "")  
+      used = used + address
+      context.actorOf(Peer.props(Tracker.id, manifest, Props(classOf[NetworkConnection], address)), s"peer:${addressEnscaped}")
+    }
+
+    def hasNext = true
+    def next = addresses match {
+      case address::rest =>
+        addresses = rest
+        Future { createPeer(address) }
+      case _ => 
+        val p = Promise[ActorRef]
+        newAddresses onSuccess { case address::rest =>
+          addresses = rest
+          p success createPeer(address)
+        }
+        p.future
     }
   }
 
@@ -52,12 +75,21 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   for (piece <- 0 until numberOfPieces)
     context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLenght))
 
+  var downloadedPieces = Set.empty[Int]
+
   def receive: Receive = {
     case Torrent.AskForPeer =>
-      val peer = newPeers(1).head
+      val peer = peers.next
       val owner = sender()
-      peerOwners += (peer -> owner)
-      owner ! peer
+      peer onSuccess { case p =>
+        peerOwners += (p -> owner)
+        owner ! p
+      }
+    case Peer.PieceDownloaded(index, data) =>
+      downloadedPieces += index
+    case Tick =>
+      println(s"Downloaded ${downloadedPieces.size}/${numberOfPieces} : ${downloadedPieces.mkString(", ")}")
+
     case x => println("Torrent received" + x) 
   }
 }
@@ -82,7 +114,7 @@ class PieceHandler(piece: Int, totalSize: Long) extends Actor {
 
   def receive = {
     case Peer.PieceDownloaded(index, data) =>
-      for (i <- 0 to 15) println(s"!!!!!Piece ${piece} downloaded!!!!")
+      torrent ! Peer.PieceDownloaded(index, data)
     case Peer.PiecePartiallyDownloaded(piece, downloaded, data) =>
       require(this.downloaded <= downloaded)
       this.downloaded = downloaded.toInt

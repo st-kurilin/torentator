@@ -4,6 +4,7 @@ object Tracker {
   import util.{Try, Success, Failure}
   import Bencoding._
   import java.net.InetSocketAddress
+  import scala.concurrent.Future
   def get(url: String, attempt: Int = 0): String = {
     try {
       return scala.io.Source.fromURL(url, "ISO-8859-1").mkString
@@ -17,7 +18,7 @@ object Tracker {
     
   val id = "ABCDEFGHIJKLMNOPQRST"
 
-  def announce(manifest: Manifest): Try[Announce] = {
+  def announce(manifest: Manifest)(implicit ec: scala.concurrent.ExecutionContext): Future[Announce] = Future {
     val hash = Bencoding.urlEncode(manifest.hash)
     val rest = "port=6881&uploaded=0&downloaded=0&left=727955456&event=started&numwant=100&no_peer_id=1&compact=1"
     
@@ -28,7 +29,10 @@ object Tracker {
     val url = s"${manifest.announce}?info_hash=${hash}&peer_id=${id}&${rest}"
     val content = get(url)
 
-    parseAnnounce(content)
+    parseAnnounce(content) match {
+      case Success(r) => r
+      case Failure(f) => throw f
+    }
   }
 
   def parseAnnounce(content: String) = {
