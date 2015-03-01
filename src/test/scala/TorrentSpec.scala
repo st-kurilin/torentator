@@ -12,7 +12,7 @@ class TorrentSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSe
   import akka.testkit.TestProbe
   import scala.concurrent.duration._
  
-  def this() = this(ActorSystem("PeerSpec"))
+  def this() = this(ActorSystem("TorrentSpec"))
   lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
   lazy val trackerId = "ABCDEFGHIJKLMNOPQRST"
  
@@ -23,8 +23,8 @@ class TorrentSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSe
   "Torrent" must {
     //for development only
     // "do it for real" in {
-    //   val torrent = system.actorOf(Props(classOf[Torrent], manifest, new java.io.File(""))) 
-    //   TestProbe().expectNoMsg(7000.seconds)
+    //   val torrent = system.actorOf(Props(classOf[Torrent], manifest, new java.io.File("")), "torrent") 
+    //   TestProbe().expectNoMsg(70000.seconds)
     // }
   }
   class Forwarder(target: ActorRef) extends Actor {

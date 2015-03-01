@@ -23,8 +23,9 @@ object Peer {
 
   case class DownloadPiece(index: Int, begin: Int, length: Long)
   case class PiecePartiallyDownloaded(index: Int, length: Long, content: Seq[Byte])
+  case class Downloading(index: Int)
   case class PieceDownloaded(index: Int, content: Seq[Byte])
-  case class CanNotDownload(reason: String) extends RuntimeException
+  case class DownloadingFailed(reason: String) extends RuntimeException
 }
 
 object PeerMessage {
@@ -142,7 +143,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
 
   def receive = {
     case c: DownloadPiece =>
-      assigment = Some((sender -> c))
+      assigment = Some((sender() -> c))
       quality = 5
     case c: ByteString =>
       hsResponce = Some(c)
@@ -150,7 +151,10 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
       context become handshaked
       //send(Interested)
     case Tick if quality > 0 => quality -= 1
-    case Tick => throw new Peer.CanNotDownload("Failed due timeout before handshake")   
+    case Tick =>
+      context become {case _ => }
+      throw new Peer.DownloadingFailed("Failed due timeout before handshake")   
+
   }
 
   def handshaked: Receive = {
@@ -160,11 +164,21 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
           case Unchoke => 
             choked = false
             quality += 2
-            if (assigment != None) download()
+            assigment match {
+              case Some ( (_, DownloadPiece(_, begin, _))) => 
+                download(begin)
+              case _ =>
+            }
+            
+            
           case c: DownloadPiece =>
-            assigment = Some((sender -> c))
+            assigment = Some((sender() -> c))
             quality = 5
-            if (!choked) download()
+            if (!choked) assigment match {
+              case Some ( (_, DownloadPiece(_, begin, _))) => 
+                download(begin)
+              case _ =>
+            }
           //case m: KeepAlive =>
           case m: Bitfield => 
           case Choke => quality -= 2
@@ -174,23 +188,29 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
       case _ => 
     }
     case Tick if quality > 0 => quality -= 1
-    case Tick => throw new Peer.CanNotDownload("Failed due timeout after handshake, but before download started")   
+    case Tick =>
+      context become {case _ => }
+      throw new Peer.DownloadingFailed("Failed due timeout after handshake, but before download started")   
   }
 
   var data = Seq.empty[Byte]
   var old: Option[ByteString] = None
   var done = false
-  def download(downloaded: Int = 0): Unit = {
+  var prevDownloaded = -1
+  def download(downloaded: Int): Unit = {
+    require(prevDownloaded <= downloaded)
     val (listener, assigment) = this.assigment.get
+    listener ! Peer.Downloading(downloaded)
 
     def handleMsd(msg : PeerMessage) = msg match {
       case KeepAlive =>
       case Choke => 
-      case Piece(index, begin, block) =>
+      case Piece(index, begin, block) if begin + block.length > downloaded =>
         println(s"got i:${index} b:${begin} size:${block.length}")
         data = data ++ block
         quality += 2
         download(begin + block.length)
+      case m: Piece =>
       case b: Bitfield => println("received Bitfield")
       case _ => println(s"startDownload got msg: ${msg}")
     }
@@ -223,9 +243,9 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
 
         case Tick if quality >= 0 =>
           quality-= 1
-          println(s"tick piece: ${assigment.index}; downloaded: ${downloaded}; quality: ${quality}")
+          println(s"tick piece: ${assigment.index}; downloaded: ${downloaded}; quality: ${quality}; // ${self}")
         case Tick if !done & quality < 0 =>
-          println(s"tick piece: ${assigment.index}; quality: ${quality}; ask for replacement")
+          println(s"tick piece: ${assigment.index}; quality: ${quality}; downloaded: ${downloaded}; ask for replacement  // ${self}")
           listener ! Peer.PiecePartiallyDownloaded(assigment.index, downloaded, data)
           context become { case _ => }
         case Tick => println(s"tick piece: ${assigment.index}; quality: ${quality}; done: ${done}")
@@ -252,8 +272,8 @@ class NetworkConnection(remote: Address) extends Actor {
 
   def connecting(msgQueue: List[Any]) : Receive = {
     case CommandFailed(_: Connect) =>
-      context stop self
-      throw new Peer.CanNotDownload("connect failed to " + remote)
+      context become {case _ => }
+      throw new Peer.DownloadingFailed("connect failed to " + remote)
  
     case c @ Connected(remote, local) =>
       val connection = sender()
@@ -269,7 +289,7 @@ class NetworkConnection(remote: Address) extends Actor {
       connection ! Write(data)
     case CommandFailed(w: Write) =>
       // O/S buffer was full
-      throw new Peer.CanNotDownload("write failed")
+      throw new Peer.DownloadingFailed("write failed")
     case Received(data) =>
       listener ! data
     case "close" =>
