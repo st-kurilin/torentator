@@ -9,19 +9,21 @@ class ManifestSpec extends FlatSpec with Matchers {
   "Manifest" should "be creatable from single file becoding description" in {
   val name = "tpb"
   val announce = "http://tpb.tpb"
-  val piece = 36
+  val pieceLength = 36
   val lenght = 200
   val hash = List()
+  val pieces = Seq.tabulate(4)(_ => Seq.tabulate(20)(n => n.toByte))
 
   val actual = Manifest(BDictionary(Map(
     "announce" -> BString(announce),
     "info" -> BDictionary(Map(
     "name"    -> BString(name),
-    "piece length"  -> BInteger(piece),
+    "piece length"  -> BInteger(pieceLength),
+    "pieces" -> BString(pieces.flatten),
     "length"  -> BInteger(lenght))))), hash)
 
   assert(actual === util.Success(
-    new SingleFileManifest(name, new java.net.URI(announce), hash, piece, lenght)))
+    new SingleFileManifest(name, new java.net.URI(announce), hash, pieces, pieceLength, lenght)))
   }
 
   it should "be creatable from multi file becoding description" in {
@@ -52,12 +54,13 @@ class ManifestSpec extends FlatSpec with Matchers {
     val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent"))
 
     manifest match {
-      case Success(SingleFileManifest(name, announce, hash, pieceLength, length)) => 
+      case Success(SingleFileManifest(name, announce, hash, pieces, pieceLength, length)) => 
         name should not be empty
         announce should not be (null)
         hash should have size 20
         pieceLength should not be (0)
         length should not be (0)
+        pieces should not be empty
         assert(hash === Bencoding.parseByteArray("1619ecc9373c3639f4ee3e261638f29b33a6cbd6"))
       case Success(m) => fail(m.toString)
       case Failure(e) => fail(e)

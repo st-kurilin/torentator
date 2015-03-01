@@ -104,8 +104,10 @@ object Bencoding {
 
     val infoValue = str.slice(startIndex, endIndex)
     val seq = str.slice(startIndex, endIndex)
-    java.security.MessageDigest.getInstance("SHA1").digest(seq.toArray)
+    hash(seq)
   }
+
+  def hash(data: Seq[Byte]) = java.security.MessageDigest.getInstance("SHA1").digest(data.toArray)
 
   def parseByteArray(s: String): Seq[Byte] = {
     val o: Tuple2[String, List[Byte]] = (("", List.empty[Byte]))

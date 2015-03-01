@@ -1,6 +1,6 @@
 package torentator 
 
-import akka.actor.{ Actor, ActorRef, Props, OneForOneStrategy, PoisonPill }
+import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, OneForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
 import akka.pattern.ask
 import scala.concurrent.duration._
@@ -8,6 +8,17 @@ import scala.concurrent.{Future, Promise}
 
 object Torrent {
   case class AskForPeer(asker: ActorRef)
+
+  case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
+        PieceHashCheckFailed for piece ${piece}.
+        Expected: ${expected.mkString(", ")}.
+        Actual  : ${actual.mkString(", ")}""") 
+
+  def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
+    val actual = Bencoding.hash(data).toSeq
+    val expected = expectedHash.toSeq
+    if (actual != expected) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
+  }
 }
 
 class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
@@ -15,6 +26,9 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   import context.dispatcher
 
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
+    case e: Torrent.PieceHashCheckFailed =>
+      println(e)
+      Restart
     case e: Throwable =>
       println("------------------------")
       e.printStackTrace
@@ -36,7 +50,8 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
 
   for (piece <- 0 until numberOfPieces){
-    val p = context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLength), s"Piece_handler:${piece}")
+    val p = context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLength, manifest.pieces(piece)),
+      s"Piece_handler:${piece}")
     println("create piece manager "  + p)
   }
 
@@ -125,11 +140,11 @@ class PeerManager(manifest: Manifest) extends Actor {
   }
 }
 
-class PieceHandler(piece: Int, totalSize: Long) extends Actor {
+class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
   implicit val timeout = akka.util.Timeout(3.seconds)
   import context.dispatcher
 
-  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
+  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {
     case f => println("PieceHandler failed: " + f); Escalate
   }
 
@@ -152,13 +167,18 @@ class PieceHandler(piece: Int, totalSize: Long) extends Actor {
   var peer: ActorRef = null
   var done = false
 
+  var pieceData = Seq.empty[Byte]
+
   download(newPeer, downloaded)
 
   def receive = {
     case Peer.PieceDownloaded(index, data) =>
-      torrent ! Peer.PieceDownloaded(index, data)
       downloaded = totalSize.toInt
       downloadedReported = totalSize.toInt
+      pieceData = pieceData ++ data
+      Torrent.checkPieceHashes(piece, pieceData, hash)  
+      torrent ! Peer.PieceDownloaded(index, data)
+      
       context become {
         case Tick => println(s"Piece ${piece} downloaded.")
         case r => println(s"Piece ${piece} downloaded. received: ${r}")
@@ -169,6 +189,7 @@ class PieceHandler(piece: Int, totalSize: Long) extends Actor {
       require(this.downloaded <= downloaded,
           s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${downloaded}")
       this.downloaded = downloaded.toInt
+      pieceData = pieceData ++ data
       download(newPeer, this.downloaded)
       downloadedReported = Math.max(downloadedReported, this.downloaded)
     case Peer.Downloading(downloading) =>

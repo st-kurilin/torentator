@@ -31,23 +31,31 @@ object Manifest {
     }
     def decodeInfo(announce: String, encoded: Bencode) = encoded match {
       case BDictionary(info) =>
-        (info.get("name"), info.get("piece length"), info.get("length"), info.get("files")) match {
+        (info.get("name"),
+          info.get("piece length"),
+          info.get("length"),
+          info.get("files"),
+          info.get("pieces")) match {
           case (Some(BString(name)),
             Some(BInteger(piece)),
             Some(BInteger(length)),
-            None) => 
-            Success(new SingleFileManifest(name, new java.net.URI(announce), hash, piece, length))
+            None, 
+            Some(BinaryString(hashes))) if hashes.size % 20 == 0 => 
+            val pieceHashes = hashes.grouped(20).toSeq.map(_.toSeq)
+            Success(new SingleFileManifest(name, new java.net.URI(announce),
+              hash, pieceHashes, piece, length))
           case (Some(BString(name)), 
             Some(BInteger(piece)),
             None,
-            Some(BList(filesList))) => 
+            Some(BList(filesList)),
+            _) => 
             decodeFiles(filesList) map { case f =>
               new MultiFileManifest(name, new java.net.URI(announce), hash, piece, f)
             }
-          case (name, pieceLength, length, files) =>
+          case (name, pieceLength, length, files, pieceHashes) =>
             f(s"""Can not determine structure of 'manifest.info':
                 name: ${name}, pieceLength: ${pieceLength},
-                length: ${length}, files: ${files}
+                length: ${length}, files: ${files}, pieceHashes: ${pieceHashes}
                 available keys: ${info.keys}""")
         }
       case e => f(s"Manifest 'info' expected to be dictionary, but [${e}] found.")
@@ -92,7 +100,7 @@ sealed trait Manifest {
   def hash: Seq[Byte]
 }
 case class SingleFileManifest(name: String, announce: java.net.URI, 
-  hash: Seq[Byte], pieceLength: Long, length: Long) extends Manifest
+  hash: Seq[Byte], pieces: Seq[Seq[Byte]], pieceLength: Long, length: Long) extends Manifest
 case class MultiFileManifest (name: String, announce: java.net.URI,
   hash: Seq[Byte], pieceLength: Long, files: Seq[(Long, String)]) extends Manifest
 
