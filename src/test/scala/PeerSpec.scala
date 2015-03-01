@@ -209,9 +209,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
       exceptionListener.expectNoMsg()
       messagesListener.fishForMessage(1.second) {
-        case Peer.PieceDownloaded(piece, data) =>
-          assert (!data.isEmpty)
-          false
+        case Peer.PieceDownloaded(piece) => false
         case _ => true
       }
     }
@@ -239,9 +237,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
       exceptionListener.expectNoMsg()
       messagesListener.fishForMessage(1.second) {
-        case Peer.PieceDownloaded(piece, data) =>
-          assert (!data.isEmpty)
-          false
+        case Peer.PieceDownloaded(piece) => false
         case _ => true
       }
     }

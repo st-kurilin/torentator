@@ -19,21 +19,25 @@ object Torrent {
     val expected = expectedHash.toSeq
     if (actual != expected) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
   }
+
+  def pieceHandlerProps(pieceIndex: Int, manifest: SingleFileManifest) = {
+    val numberOfPieces = java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
+    val pieceActualLength = if (pieceIndex == numberOfPieces - 1)
+        manifest.length % manifest.pieceLength
+      else manifest.pieceLength
+    Props(classOf[PieceHandler], pieceIndex, pieceActualLength, manifest.pieces(pieceIndex))
+  }
 }
 
 class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
+  import Torrent._
+  import Peer._
   import scala.concurrent.duration._
-  import context.dispatcher
+  import context.dispatcher  
 
-  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
-    case e: Torrent.PieceHashCheckFailed =>
-      println(e)
-      Restart
-    case e: Throwable =>
-      println("------------------------")
-      e.printStackTrace
-      println("------------------------")
-      Escalate
+  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = true) {
+    case e: PieceHashCheckFailed => Restart
+    case e: Throwable => Escalate
   }
 
   val manifest = _manifest match {
@@ -42,51 +46,46 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
   }
     
   val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
-
   println("pieceLength: " + manifest.pieceLength)
   println("piece actual number: " + java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
   val Tick = "tick"
   context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
 
-  for (piece <- 0 until numberOfPieces){
-    val p = context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLength, manifest.pieces(piece)),
-      s"Piece_handler:${piece}")
-    println("create piece manager "  + p)
-  }
-
-
-  var downloadedPieces = Set.empty[Int]
+  for (piece <- 0 until numberOfPieces)
+    context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
 
   val peerManager = context.actorOf(Props(classOf[PeerManager], manifest))
+
+  var downloadedPieces = Set.empty[Int]
 
   def receive: Receive = {
     case m: Torrent.AskForPeer =>
       peerManager forward m
-    case Peer.PieceDownloaded(index, data) =>
+    case PieceDownloaded(index) =>
       downloadedPieces += index
     case Tick =>
       println(s"Downloaded ${downloadedPieces.size}/${numberOfPieces} : ${downloadedPieces.mkString(", ")}")
-
     case x => println("Torrent received" + x) 
   }
 }
 
 class PeerManager(manifest: Manifest) extends Actor {
+  import Torrent._
+  import Peer._
   import context.dispatcher
+
   type Address = java.net.InetSocketAddress
   case class NewAddresses(addresses: List[Address])
 
   val Tick = "tick"
   context.system.scheduler.schedule(0.second, 1.second, self, Tick)
 
-  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
+  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = true) {
     case e: Peer.DownloadingFailed if peerOwners contains sender() =>
-      println(s"catched DownloadingFailed from ${sender()}; owner: ${peerOwners(sender())}")
       peerOwners(sender()) forward e
       Stop
     case e: Peer.DownloadingFailed =>
-      println ("???Downloading failed for peer without owner")
       Stop
     case _ => Escalate
   }
@@ -99,8 +98,7 @@ class PeerManager(manifest: Manifest) extends Actor {
     map(NewAddresses(_)).
     recoverWith{case _ => newAddresses}
     
-
-  var waiting = List.empty[(ActorRef, Torrent.AskForPeer)]
+  var waiting = List.empty[(ActorRef, AskForPeer)]
   var peerOwners = Map.empty[ActorRef, ActorRef]
 
   def createPeer(address: Address) = {
@@ -141,11 +139,14 @@ class PeerManager(manifest: Manifest) extends Actor {
 }
 
 class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
+  import Torrent._
+  import Peer._
+
   implicit val timeout = akka.util.Timeout(3.seconds)
   import context.dispatcher
 
-  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {
-    case f => println("PieceHandler failed: " + f); Escalate
+  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = true) {
+    case f => Escalate
   }
 
   val Tick = "tick"
@@ -153,17 +154,16 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
 
   val torrent = context.parent
 
-  def newPeer: Future[ActorRef] = (torrent ? new Torrent.AskForPeer(self)).mapTo[ActorRef].recoverWith {
+  def newPeer: Future[ActorRef] = (torrent ? new AskForPeer(self)).mapTo[ActorRef].recoverWith {
    case f => println(s"failed on peer creation ${f}"); newPeer
   }
 
-  def download(peer: Future[ActorRef], start: Int) = newPeer onSuccess { case peer =>
-    peer ! Peer.DownloadPiece(piece, start, totalSize)
+  def download(peer: Future[ActorRef], offset: Int) = newPeer onSuccess { case peer =>
+    peer ! DownloadPiece(piece, offset, totalSize)
     this.peer = peer
   }
 
-  var downloaded = 0
-  var downloadedReported = 0
+  def downloaded = pieceData.size
   var peer: ActorRef = null
   var done = false
 
@@ -172,35 +172,25 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
   download(newPeer, downloaded)
 
   def receive = {
-    case Peer.PieceDownloaded(index, data) =>
-      downloaded = totalSize.toInt
-      downloadedReported = totalSize.toInt
-      pieceData = pieceData ++ data
-      Torrent.checkPieceHashes(piece, pieceData, hash)  
-      torrent ! Peer.PieceDownloaded(index, data)
+    case PieceDownloaded(index) =>
+      checkPieceHashes(piece, pieceData, hash)
+      torrent ! PieceDownloaded(index)
       
       context become {
         case Tick => println(s"Piece ${piece} downloaded.")
         case r => println(s"Piece ${piece} downloaded. received: ${r}")
       }
-    case Peer.PiecePartiallyDownloaded(piece, downloaded, data) =>
-      println(s"piece: ${piece}. asked for replacement: dwn: ${downloaded};  peer ${sender()}")
-      sender() ! PoisonPill
-      require(this.downloaded <= downloaded,
-          s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${downloaded}")
-      this.downloaded = downloaded.toInt
-      pieceData = pieceData ++ data
-      download(newPeer, this.downloaded)
-      downloadedReported = Math.max(downloadedReported, this.downloaded)
-    case Peer.Downloading(downloading) =>
-      downloadedReported = Math.max(downloading, this.downloaded)
-    case Peer.DownloadingFailed (reason) => 
+    case BlockDownloaded(pieceIndex, offset, content) => 
+      require(downloaded == offset,
+          s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${offset}+")
+      pieceData = pieceData ++ content
+    case DownloadingFailed(reason: String) =>
       if (!done) {
-        println(s"peer ${sender()} will be replaced due ${reason}")
-        download(newPeer, downloaded)  
+        println(s"piece: ${piece}. asked for replacement: reason: ${reason} dwn: ${downloaded};  peer ${sender()}")
+        sender() ! PoisonPill
+        download(newPeer, downloaded)
       }
     case Tick =>
-      println(s"Piece ${piece}. Downloaded ${100*downloadedReported/totalSize}% [${downloadedReported}/${totalSize} B]. ${peer}")
-
+      println(s"Piece ${piece}. Downloaded ${100*downloaded/totalSize}% [${downloaded}/${totalSize} B]. ${peer}")
   }
 }
