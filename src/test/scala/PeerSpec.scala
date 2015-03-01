@@ -48,9 +48,9 @@ class PeerPoorSpec extends FlatSpec with Matchers {
     import PeerMessage._
     import util.{Try, Success}
     Seq(
-      ("lenght is too small" -> Seq(0, 0, 0, 2, 0)),
+      ("length is too small" -> Seq(0, 0, 0, 2, 0)),
       ("data is required but missing" -> Seq(0, 0, 0, 1)),
-      ("lenght is too big" -> Seq(0, 0, 0, 1, 0, 0)), 
+      ("length is too big" -> Seq(0, 0, 0, 1, 0, 0)), 
       ("to big data for Have" -> Seq(0, 0, 0, 6, 4, 0, 0, 1, 42, 0)),
       ("not enought data to parse Have" -> Seq(0, 0, 0, 4, 4, 0, 0, 1)),
       ("not enought data to parse Request" -> Seq(0, 0, 0, 12, 6, 0, 0, 1, 2, 0, 0, 1, 3, 1, 2, 3)),
@@ -81,7 +81,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
   import scala.concurrent.duration._
   import akka.util.{ByteString => BString}
 
-  implicit val timeout = Timeout(1 second)
+  implicit val timeout = Timeout(1.second)
   import system.dispatcher
  
   def this() = this(ActorSystem("PeerSpec"))
@@ -172,7 +172,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
         def receive = { case hs: BString =>
             sender() ! hs
             sender() ! messageAsBytes(PeerMessage.Unchoke)
-            context.setReceiveTimeout(1 second)
+            context.setReceiveTimeout(1.second)
             context become {
               case PeerMessage(m) if (m match {
                 case r: PeerMessage.Request => true
@@ -208,7 +208,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       newPeer(connectionMock) onSuccess giveDownloadTask
 
       exceptionListener.expectNoMsg()
-      messagesListener.fishForMessage(1 second) {
+      messagesListener.fishForMessage(1.second) {
         case Peer.PieceDownloaded(piece, data) =>
           assert (!data.isEmpty)
           false
@@ -238,7 +238,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       newPeer(connectionMock) onSuccess giveDownloadTask
 
       exceptionListener.expectNoMsg()
-      messagesListener.fishForMessage(1 second) {
+      messagesListener.fishForMessage(1.second) {
         case Peer.PieceDownloaded(piece, data) =>
           assert (!data.isEmpty)
           false

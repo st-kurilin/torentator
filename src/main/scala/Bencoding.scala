@@ -44,6 +44,7 @@ object Bencoding {
       BDictionary(x.foldLeft(Map.empty[String, Bencode]) {
         case (r, BString(key)::(value:Bencode)::Nil) =>
           r + (key -> value)
+        case f => throw new RuntimeException("Bencoding: could not parse dictionary. Failed on: " + f)
       })
     }
     def expr: Parser[Bencode] = str | int | list | dict

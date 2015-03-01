@@ -88,11 +88,11 @@ object Manifest {
 sealed trait Manifest {
   def name: String
   def announce: java.net.URI
-  def pieceLenght: Long
+  def pieceLength: Long
   def hash: Seq[Byte]
 }
 case class SingleFileManifest(name: String, announce: java.net.URI, 
-  hash: Seq[Byte], pieceLenght: Long, length: Long) extends Manifest
+  hash: Seq[Byte], pieceLength: Long, length: Long) extends Manifest
 case class MultiFileManifest (name: String, announce: java.net.URI,
-  hash: Seq[Byte], pieceLenght: Long, files: Seq[(Long, String)]) extends Manifest
+  hash: Seq[Byte], pieceLength: Long, files: Seq[(Long, String)]) extends Manifest
 

@@ -27,16 +27,16 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
     
-  val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt
+  val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
 
-  println("pieceLenght: " + manifest.pieceLenght)
-  println("piece actual number: " + java.lang.Math.floor(manifest.length / manifest.pieceLenght).toInt)
+  println("pieceLength: " + manifest.pieceLength)
+  println("piece actual number: " + java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
   val Tick = "tick"
-  context.system.scheduler.schedule(1 seconds, 5 seconds, self, Tick)
+  context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
 
   for (piece <- 0 until numberOfPieces){
-    val p = context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLenght), s"Piece_handler:${piece}")
+    val p = context.actorOf(Props(classOf[PieceHandler], piece, manifest.pieceLength), s"Piece_handler:${piece}")
     println("create piece manager "  + p)
   }
 
@@ -63,7 +63,7 @@ class PeerManager(manifest: Manifest) extends Actor {
   case class NewAddresses(addresses: List[Address])
 
   val Tick = "tick"
-  context.system.scheduler.schedule(0 seconds, 1 seconds, self, Tick)
+  context.system.scheduler.schedule(0.second, 1.second, self, Tick)
 
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
     case e: Peer.DownloadingFailed if peerOwners contains sender() =>
@@ -126,7 +126,7 @@ class PeerManager(manifest: Manifest) extends Actor {
 }
 
 class PieceHandler(piece: Int, totalSize: Long) extends Actor {
-  implicit val timeout = akka.util.Timeout(3 second)
+  implicit val timeout = akka.util.Timeout(3.seconds)
   import context.dispatcher
 
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
@@ -134,7 +134,7 @@ class PieceHandler(piece: Int, totalSize: Long) extends Actor {
   }
 
   val Tick = "tick"
-  context.system.scheduler.schedule(0 seconds, 10 seconds, self, Tick)
+  context.system.scheduler.schedule(0.second, 10.seconds, self, Tick)
 
   val torrent = context.parent
 

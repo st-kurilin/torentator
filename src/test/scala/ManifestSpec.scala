@@ -52,11 +52,11 @@ class ManifestSpec extends FlatSpec with Matchers {
     val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent"))
 
     manifest match {
-      case Success(SingleFileManifest(name, announce, hash, pieceLenght, length)) => 
+      case Success(SingleFileManifest(name, announce, hash, pieceLength, length)) => 
         name should not be empty
         announce should not be (null)
         hash should have size 20
-        pieceLenght should not be (0)
+        pieceLength should not be (0)
         length should not be (0)
         assert(hash === Bencoding.parseByteArray("1619ecc9373c3639f4ee3e261638f29b33a6cbd6"))
       case Success(m) => fail(m.toString)
@@ -68,11 +68,11 @@ class ManifestSpec extends FlatSpec with Matchers {
     val manifest = Manifest(new java.io.File("./src/test/resources/sample.multi.udp.torrent"))
 
     manifest match {
-      case Success(MultiFileManifest(name, announce, hash, pieceLenght, files)) => 
+      case Success(MultiFileManifest(name, announce, hash, pieceLength, files)) => 
         name should not be empty
         announce should not be (null)
         hash should have size 20
-        pieceLenght should not be (0)
+        pieceLength should not be (0)
         files should not be empty
       case Success(m) => fail(m.toString)
       case Failure(e) => fail(e)
