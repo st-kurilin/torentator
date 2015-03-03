@@ -22,10 +22,10 @@ class TorrentSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSe
 
   "Torrent" must {
     //for development only
-    // "do it for real" in {
-    //   val torrent = system.actorOf(Props(classOf[Torrent], manifest, new java.io.File("")), "torrent") 
-    //   TestProbe().expectNoMsg(70000.seconds)
-    // }
+    "do it for real" in {
+      val torrent = system.actorOf(Props(classOf[Torrent], manifest, new java.io.File("")), "torrent") 
+      TestProbe().expectNoMsg(70000.seconds)
+    }
   }
   class Forwarder(target: ActorRef) extends Actor {
     def receive = {

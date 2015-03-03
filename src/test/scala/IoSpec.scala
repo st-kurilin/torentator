@@ -1,4 +1,4 @@
-package torentator 
+package torentator.io
 
 import org.scalatest._
 import scala.concurrent.duration._
@@ -10,7 +10,7 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
   with WordSpecLike with Matchers with BeforeAndAfterAll {
   import akka.testkit.TestProbe
   import scala.concurrent.duration._
-  import FileActor._
+  import Io._
  
   def this() = this(ActorSystem("FileActorSpec"))
  
@@ -20,7 +20,7 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
   def tempFile = Files.createTempFile("torrentator", "temp")
   def exists(p: Path) = Files.exists(p)
-  def fileIo(p: Path) = system.actorOf(FileActor.props(p))
+  def fileIo(p: Path) = system.actorOf(fileConnectionProps(p))
   def read(p: Path) = Files.readAllBytes(p).toSeq
   def delete(p: Path) = Files.delete(p)
   def bytes(data: Int*) = data.map(_.toByte).toSeq
@@ -41,9 +41,9 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val data = bytes(1, 2, 3)
       def actor = fileIo(file)
 
-      actor.tell(Write(data, 0), listener.ref)
+      actor.tell(Write(data, 0, 0), listener.ref)
 
-      listener.expectMsg(Written)
+      listener.expectMsg(WriteConfirmation(0))
       assert(read(file) == data)
     }
 
@@ -54,9 +54,9 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val data = bytes(1, 2, 3)
       def actor = fileIo(file)
 
-      actor.tell(Write(data, 0), listener.ref)
+      actor.tell(Write(data, 0, 0), listener.ref)
 
-      listener.expectMsg(Written)
+      listener.expectMsg(WriteConfirmation(0))
       assert(read(file) == data)
     }
 
@@ -66,9 +66,9 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val data = bytes(1, 2, 3)
       def actor = fileIo(file)
 
-      actor.tell(Write(data, 5), listener.ref)
+      actor.tell(Write(data, 5, 1), listener.ref)
 
-      listener.expectMsg(Written)
+      listener.expectMsg(WriteConfirmation(1))
       assert(read(file) == bytes(0, 0, 0, 0, 0) ++ data)
     }
 
@@ -76,11 +76,11 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val file = tempFile
       def actor = fileIo(file)
 
-      actor.tell(Write(bytes(7, 8), 5), listener.ref)
-      actor.tell(Write(bytes(2, 3), 2), listener.ref)
+      actor.tell(Write(bytes(7, 8), 5, 1), listener.ref)
+      actor.tell(Write(bytes(2, 3), 2, 2), listener.ref)
 
-      listener.expectMsg(Written)
-      listener.expectMsg(Written)
+      require(listener.receiveN(2).toSet == Set(WriteConfirmation(1), WriteConfirmation(2)))
+
       assert(read(file) == bytes(0, 0, 2, 3, 0, 7, 8))
     }
   }

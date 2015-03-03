@@ -124,8 +124,12 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   import scala.language.postfixOps
   import scala.concurrent.duration._
   import context.dispatcher
+  import io.Io
 
-  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {case e => Escalate}
+  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {
+    case Io.ConnectionFailed(reason) => throw new DownloadingFailed(reason)
+    case e => Escalate
+  }
 
   val Tick = "tick"
   var quality = 1000
@@ -133,7 +137,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
 
   var hsResponce: Option[Seq[Byte]] = None
   val hs = handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
-  connection ! ByteString(hs.toArray)    
+  connection ! io.Io.Write(hs)    
 
   var assigment: Option[(ActorRef, DownloadPiece)] = None
   var choked = true
@@ -252,50 +256,9 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
     }
   }
   def send(msg: PeerMessage) = msg match {
-    case PByteString(bytes) => connection ! bytes
+    case PByteString(bytes) => connection ! Io.Write(bytes)
   }
 }
 
 
 
-class NetworkConnection(remote: Address) extends Actor {
-  import Peer._
-  import Tcp._
-  import context.system
-
-  override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {case e => Escalate}
-
-  val listener = context.parent
-  IO(Tcp) ! Connect(remote)
- 
-  def receive = connecting(List.empty)
-
-  def connecting(msgQueue: List[Any]) : Receive = {
-    case CommandFailed(_: Connect) =>
-      context become {case _ => }
-      throw new DownloadingFailed("connect failed to " + remote)
- 
-    case c @ Connected(remote, local) =>
-      val connection = sender()
-      connection ! Register(self)
-      context become connected(connection)
-      for (m <- msgQueue) self ! m
-    case x =>
-      context become connecting(x :: msgQueue)
-  }
-
-  def connected(connection: ActorRef): Receive = {
-    case data: ByteString => 
-      connection ! Write(data)
-    case CommandFailed(w: Write) =>
-      // O/S buffer was full
-      throw new DownloadingFailed("write failed")
-    case Received(data) =>
-      listener ! data
-    case "close" =>
-      connection ! Close
-    case _: ConnectionClosed =>
-      listener ! "connection closed"
-      context stop self
-  }
-}
