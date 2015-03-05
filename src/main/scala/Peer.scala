@@ -2,9 +2,6 @@ package torentator
 
 import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
-import akka.io.{ IO, Tcp }
-import akka.util.ByteString
-import java.net.{InetSocketAddress => Address}
 
 
 object Peer {
@@ -44,14 +41,14 @@ object PeerMessage {
 
 
 
-  def unapply(x: ByteString): Option[PeerMessage] = {
-    def takeInt(bs: ByteString) = {
+  def unapply(x: Seq[Byte]): Option[PeerMessage] = {
+    def takeInt(bs: Seq[Byte]) = {
       val (intRaw, rest) = bs.splitAt(4)
       val int = java.nio.ByteBuffer.wrap(intRaw.toArray).getInt()
       (int, rest)
     }
 
-    def readInt(bs: ByteString): Int = {
+    def readInt(bs: Seq[Byte]): Int = {
       takeInt(bs)._1
     }
     if (x.length < 4) return None
@@ -87,47 +84,42 @@ object PeerMessage {
       parsed.lift(id(0))
     }
   }
-
-  object ByteString {
+  def toBytes(x: PeerMessage): Seq[Byte] = {
     def intToByteArray(int: Int, size: Int = 4): Seq[Byte] = 
       java.nio.ByteBuffer.allocate(4).putInt(int).array().drop(4 - size)
     def seq(ints: Int*) = ints.map(_.toByte)
 
-    def unapply(x: PeerMessage): Option[ByteString] = {
-      val known: PartialFunction[PeerMessage, Seq[Byte]] = {
-        case KeepAlive => seq(0, 0, 0, 0)
-        case Choke => seq(0, 0, 0, 1, 0)
-        case Unchoke => seq(0, 0, 0, 1, 1)
-        case Interested => seq(0, 0, 0, 1, 2)
-        case NotInterested => seq(0, 0, 0, 1, 3)
-        case Have(x) => seq(0, 0, 0, 5, 4) ++ intToByteArray(x)
-        case Bitfield(data) => intToByteArray(data.length + 1) ++
-          seq(5) ++ data
-        case Request(index, begin, length) => seq(0, 0, 0, 13, 6) ++ 
-          intToByteArray(index) ++ intToByteArray(begin) ++
-          intToByteArray(length)
-        case Piece(index, begin, block) => intToByteArray(block.length + 9) ++
-          seq(7) ++ intToByteArray(index) ++ intToByteArray(begin) ++ block
-        case Cancel(index, begin, length) => seq(0, 0, 0, 13, 8) ++ 
-          intToByteArray(index) ++ intToByteArray(begin) ++
-          intToByteArray(length)
-        case Port(x) => seq(0, 0, 0, 3, 9) ++ intToByteArray(x, 2)
-      }
-      known.andThen(res => akka.util.ByteString(res.toArray)).lift(x)
+    x match {
+      case KeepAlive => seq(0, 0, 0, 0)
+      case Choke => seq(0, 0, 0, 1, 0)
+      case Unchoke => seq(0, 0, 0, 1, 1)
+      case Interested => seq(0, 0, 0, 1, 2)
+      case NotInterested => seq(0, 0, 0, 1, 3)
+      case Have(x) => seq(0, 0, 0, 5, 4) ++ intToByteArray(x)
+      case Bitfield(data) => intToByteArray(data.length + 1) ++
+        seq(5) ++ data
+      case Request(index, begin, length) => seq(0, 0, 0, 13, 6) ++ 
+        intToByteArray(index) ++ intToByteArray(begin) ++
+        intToByteArray(length)
+      case Piece(index, begin, block) => intToByteArray(block.length + 9) ++
+        seq(7) ++ intToByteArray(index) ++ intToByteArray(begin) ++ block
+      case Cancel(index, begin, length) => seq(0, 0, 0, 13, 8) ++ 
+        intToByteArray(index) ++ intToByteArray(begin) ++
+        intToByteArray(length)
+      case Port(x) => seq(0, 0, 0, 3, 9) ++ intToByteArray(x, 2)
     }
   }
 }
 
 class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor {
   import Peer._
-  import PeerMessage.{ByteString => PByteString, _}
+  import PeerMessage._
   import scala.language.postfixOps
   import scala.concurrent.duration._
   import context.dispatcher
-  import io.Io
 
   override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {
-    case Io.ConnectionFailed(reason) => throw new DownloadingFailed(reason)
+    case io.ConnectionFailed(reason) => throw new DownloadingFailed(reason)
     case e => Escalate
   }
 
@@ -137,7 +129,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
 
   var hsResponce: Option[Seq[Byte]] = None
   val hs = handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
-  connection ! io.Io.Write(hs)    
+  connection ! io.Send(hs)    
 
   var assigment: Option[(ActorRef, DownloadPiece)] = None
   var choked = true
@@ -148,7 +140,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
     case c: DownloadPiece =>
       assigment = Some((sender() -> c))
       quality = 5
-    case c: ByteString =>
+    case io.Received(c) =>
       hsResponce = Some(c)
       quality += 1
       context become handshaked
@@ -161,7 +153,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   }
 
   def handshaked: Receive = {
-    case c: ByteString => c match {
+    case io.Received(c) => c match {
       case PeerMessage(m) => 
         m match {
           case Unchoke => 
@@ -188,7 +180,6 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
           case KeepAlive =>
           case m =>  println("RECEIVED MSG: " + m) 
         }
-      case _ => 
     }
     case Tick if quality > 0 => quality -= 1
     case Tick =>
@@ -197,7 +188,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   }
 
   var data = Seq.empty[Byte]
-  var old: Option[ByteString] = None
+  var old: Option[Seq[Byte]] = None
   var done = false
   var prevDownloaded = -1
   def download(downloaded: Int): Unit = {
@@ -227,10 +218,9 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
     } else {
       send(Request(assigment.pieceIndex, downloaded, java.lang.Math.min(16384, (assigment.length - downloaded).toInt)))
       context become {
-        case PeerMessage(m) =>
-          handleMsd(m)
-        case bs: ByteString => 
-          old match {
+        case io.Received(bs) => bs match {
+          case PeerMessage(m) => handleMsd(m)
+          case _ => old match {
             case Some(o) =>
               (o ++ bs) match {
                 case PeerMessage(m) =>
@@ -242,8 +232,8 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
               }
             case None => 
               old = Some(bs)
-          }
-
+            }
+        }
         case Tick if quality >= 0 =>
           quality-= 1
           println(s"tick piece: ${assigment.pieceIndex}; downloaded: ${downloaded}; quality: ${quality}; // ${self}")
@@ -255,9 +245,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
       }
     }
   }
-  def send(msg: PeerMessage) = msg match {
-    case PByteString(bytes) => connection ! Io.Write(bytes)
-  }
+  def send(msg: PeerMessage) = connection ! io.Send(toBytes(msg))
 }
 
 

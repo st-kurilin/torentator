@@ -41,9 +41,9 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val data = bytes(1, 2, 3)
       def actor = fileIo(file)
 
-      actor.tell(Write(data, 0, 0), listener.ref)
+      actor.tell(Send(data, 0, 0), listener.ref)
 
-      listener.expectMsg(WriteConfirmation(0))
+      listener.expectMsg(Sended(0))
       assert(read(file) == data)
     }
 
@@ -54,9 +54,9 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val data = bytes(1, 2, 3)
       def actor = fileIo(file)
 
-      actor.tell(Write(data, 0, 0), listener.ref)
+      actor.tell(Send(data, 0, 0), listener.ref)
 
-      listener.expectMsg(WriteConfirmation(0))
+      listener.expectMsg(Sended(0))
       assert(read(file) == data)
     }
 
@@ -66,9 +66,9 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val data = bytes(1, 2, 3)
       def actor = fileIo(file)
 
-      actor.tell(Write(data, 5, 1), listener.ref)
+      actor.tell(Send(data, 5, 1), listener.ref)
 
-      listener.expectMsg(WriteConfirmation(1))
+      listener.expectMsg(Sended(1))
       assert(read(file) == bytes(0, 0, 0, 0, 0) ++ data)
     }
 
@@ -76,10 +76,10 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val file = tempFile
       def actor = fileIo(file)
 
-      actor.tell(Write(bytes(7, 8), 5, 1), listener.ref)
-      actor.tell(Write(bytes(2, 3), 2, 2), listener.ref)
+      actor.tell(Send(bytes(7, 8), 5, 1), listener.ref)
+      actor.tell(Send(bytes(2, 3), 2, 2), listener.ref)
 
-      require(listener.receiveN(2).toSet == Set(WriteConfirmation(1), WriteConfirmation(2)))
+      require(listener.receiveN(2).toSet == Set(Sended(1), Sended(2)))
 
       assert(read(file) == bytes(0, 0, 2, 3, 0, 7, 8))
     }

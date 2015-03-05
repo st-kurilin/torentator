@@ -40,7 +40,7 @@ class PeerPoorSpec extends FlatSpec with Matchers {
         val encoded = akka.util.ByteString(bytes.map(_.toByte).toArray)
 
         assert(unapply(encoded)  === Some(message), message)
-        assert(PeerMessage.ByteString.unapply(message) == Some(encoded), s"Failed during '${message}' test")
+        assert(PeerMessage.toBytes(message) == encoded, s"Failed during '${message}' test")
     }
   }
 
@@ -69,11 +69,13 @@ class PeerPoorSpec extends FlatSpec with Matchers {
   }
 }
 
+import io._
 import akka.actor._
 import akka.testkit._
 import akka.pattern.{ask, pipe}
 import akka.util.Timeout
 import akka.actor.SupervisorStrategy._
+
 
 class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
@@ -96,16 +98,11 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
   val messagesListener = TestProbe()
   val superviser = system.actorOf(Props(new Superviser(exceptionListener.ref, messagesListener.ref)))
 
-  // val giveDownloadTask: PartialFunction[util.Try[ActorRef], Unit] = {
-  //   case util.Success(p) => p ! Peer.DownloadPiece(0, 100500)
-  // }
   val giveDownloadTask: PartialFunction[ActorRef, Unit] = { case r =>
     r.tell(Peer.DownloadPiece(0, 0, 100500), superviser)
   }
 
-  def messageAsBytes(msg: PeerMessage.PeerMessage) = {
-    PeerMessage.ByteString.unapply(msg).get
-  }
+  def messageAsBytes(msg: PeerMessage.PeerMessage) = PeerMessage.toBytes(msg)
 
   def byteArray(size: Int) = List.fill(size)(7).map(_.toByte)
 
@@ -125,7 +122,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       val connection = TestProbe()
       val peer = system.actorOf(Peer.props(trackerId, manifest, Props(new Forwarder(connection.ref))))
 
-      connection.expectMsg(expectedHandshake)  
+      connection.expectMsg(Send(expectedHandshake))
     }
 
     "escalates network exceptions" in {
@@ -141,8 +138,8 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
     "should not send any messages if was not unchoked" in {
       val connectionMock = Props(new Actor {
-        def receive = { case hs: BString =>
-            sender() ! hs
+        def receive = { case Send(hs, _, _) =>
+            sender() ! Received(hs)
             context become throwIfAnyReceived
         }
       })
@@ -154,9 +151,9 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
     "should not send any messages if didn't receive task" in {
       val connectionMock = Props(new Actor {
-        def receive = { case hs: BString =>
-            sender() ! hs
-            sender() ! messageAsBytes(PeerMessage.Unchoke)
+        def receive = { case Send(hs, _, _) =>
+            sender() ! Received(hs)
+            sender() ! Received(messageAsBytes(PeerMessage.Unchoke))
             context become throwIfAnyReceived
         }
       })
@@ -169,12 +166,12 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
     "should ask for block if unchoke is given and task is received" in {
       var requestReceived = false
       val connectionMock = Props(new Actor {
-        def receive = { case hs: BString =>
-            sender() ! hs
-            sender() ! messageAsBytes(PeerMessage.Unchoke)
+        def receive = { case Send(hs, _, _) =>
+            sender() ! Received(hs)
+            sender() ! Received(messageAsBytes(PeerMessage.Unchoke))
             context.setReceiveTimeout(1.second)
             context become {
-              case PeerMessage(m) if (m match {
+              case Send(PeerMessage(m), _, _) if (m match {
                 case r: PeerMessage.Request => true
                 case _ => false
               }) => requestReceived = true
@@ -192,13 +189,13 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
     "should downlod piece if connection is nice" in {
       val connectionMock = Props(new Actor {
-        def receive = { case hs: BString =>
-            sender() ! hs
-            sender() ! messageAsBytes(PeerMessage.Unchoke)
+        def receive = { case Send(hs, _, _) =>
+            sender() ! Received(hs)
+            sender() ! Received(messageAsBytes(PeerMessage.Unchoke))
             context become {
-              case PeerMessage(m) => m match {
+              case Send(PeerMessage(m), 0, _) => m match {
                 case PeerMessage.Request(index, begin, length) =>
-                  sender() ! messageAsBytes(new PeerMessage.Piece(index, begin, byteArray(length)))
+                  sender() ! Received(messageAsBytes(new PeerMessage.Piece(index, begin, byteArray(length))))
                 case _ => 
               }
             }
@@ -210,23 +207,24 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
       exceptionListener.expectNoMsg()
       messagesListener.fishForMessage(1.second) {
         case Peer.PieceDownloaded(piece) => false
-        case _ => true
+        case m => true
       }
     }
 
     "should be able to handle splitted pieces" in {
       val connectionMock = Props(new Actor {
-        def receive = { case hs: BString =>
+        def receive = { case io.Send(hs, _, _) =>
             sender() ! hs
-            sender() ! messageAsBytes(PeerMessage.Unchoke)
+            sender() ! io.Received(hs)
+            sender() ! io.Received(messageAsBytes(PeerMessage.Unchoke))
             context become {
-              case PeerMessage(m) => m match {
+              case Send(PeerMessage(m), _, _) => m match {
                 case PeerMessage.Request(index, begin, length) =>
                   val bytes = messageAsBytes(new PeerMessage.Piece(index, begin, byteArray(length)))
                   val (msg1, msg2) = bytes splitAt 10
                   require(msg1.length + msg2.length == bytes.length)
-                  sender() ! msg1 
-                  sender() ! msg2
+                  sender() ! Received(msg1)
+                  sender() ! Received(msg2)
                 case _ => 
               }
             }
