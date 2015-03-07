@@ -1,23 +1,16 @@
 package torentator.io
 
-import org.scalatest._
 import scala.concurrent.duration._
 import akka.actor.{Actor, ActorRef, Props, ActorSystem}
+import org.scalatest._
 import akka.testkit.{ TestActors, TestKit, ImplicitSender }
-import java.nio.file.{Files, Path}
+import akka.testkit.TestProbe
+import Io._
 
-class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
-  with WordSpecLike with Matchers with BeforeAndAfterAll {
-  import akka.testkit.TestProbe
-  import scala.concurrent.duration._
-  import Io._
- 
-  def this() = this(ActorSystem("FileActorSpec"))
- 
-  override def afterAll {
-    TestKit.shutdownActorSystem(system)
-  }
 
+class FileConnectionSpec extends torentator.ActorSpec("FileConnectionSpec") {
+  import java.nio.file.{Files, Path}
+ 
   def tempFile = Files.createTempFile("torrentator", "temp")
   def exists(p: Path) = Files.exists(p)
   def fileIo(p: Path) = system.actorOf(fileConnectionProps(p))
@@ -27,8 +20,8 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
 
   val listener = TestProbe()
 
-  "FileActor" must {
-    "should not write to file if was not asked" in {
+  "FileConnection" must {
+    "not write to file if was not asked" in {
       val file = tempFile
       require(exists(file))
 
@@ -85,3 +78,63 @@ class FileActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
     }
   }
 }
+
+class NetworkConnectionSpec extends torentator.ActorSpec("NetworkConnectionSpec") {
+  import java.net.InetSocketAddress
+  import akka.pattern.ask
+  import akka.io.{ IO, Tcp }
+  import scala.concurrent.Await
+  import akka.testkit.TestProbe
+ 
+  def bytes(data: Int*) = data.map(_.toByte).toSeq
+
+  val networkConnectionParent = TestProbe()
+  val bindListener = TestProbe()
+
+  "NetworkConnection" must {
+    "should work" in {
+      val serverHandler = system.actorOf(Props(new BytesAdder()))
+      val server = system.actorOf(Props(classOf[Server], bindListener.ref, serverHandler))
+      val serverAddress = bindListener.expectMsgType[InetSocketAddress]
+      val superviser = newSuperviser(networkConnectionParent.ref, testActor)
+      val networkConnection = Await.result((superviser ? tcpConnectionProps(serverAddress)).mapTo[ActorRef], 1.second)
+
+      networkConnection ! Send(bytes(1, 2, 3))
+
+      val Received(data) = networkConnectionParent.expectMsgType[Received]
+      assert(data.toSeq == bytes(1 + 2 + 3).toSeq) 
+    }
+  }
+
+class BytesAdder extends Actor {
+    import Tcp._
+    def receive = {
+      case Received(data) =>
+        val sum = data.foldLeft(0) { case (acc, x) => acc + x }
+        val msg = akka.util.ByteString(bytes(sum).toArray)
+        sender() ! Write(msg)
+      case PeerClosed     => context stop self
+      case x => println("???" + x)
+    }
+  }
+}
+
+class Server(bindListener: ActorRef, messageHandler: ActorRef) extends Actor {
+    import akka.io.{ IO, Tcp }
+    import java.net.InetSocketAddress
+    import Tcp._
+    import context.system
+    import context._
+   
+    IO(Tcp) ! Bind(self, new InetSocketAddress("localhost", 0))
+
+    def receive = {
+      case b @ Bound(localAddress) =>
+        bindListener ! localAddress
+      case CommandFailed(_: Bind) => context stop self
+   
+      case c @ Connected(remote, local) =>
+        val connection = sender()
+        connection ! Register(messageHandler)
+    }
+  }

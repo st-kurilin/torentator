@@ -69,34 +69,21 @@ class PeerPoorSpec extends FlatSpec with Matchers {
   }
 }
 
-import io._
-import akka.actor._
-import akka.testkit._
-import akka.pattern.{ask, pipe}
-import akka.util.Timeout
-import akka.actor.SupervisorStrategy._
 
-
-class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
-  with WordSpecLike with Matchers with BeforeAndAfterAll {
-  import akka.testkit.TestProbe
-  import scala.concurrent.duration._
+class PeerActorSpec extends ActorSpec("PeerSpec") {
   import akka.util.{ByteString => BString}
-
-  implicit val timeout = Timeout(1.second)
+  import akka.actor.{Actor, ActorRef, Props, ReceiveTimeout}
+  import akka.pattern.ask
+  import akka.testkit.TestProbe
   import system.dispatcher
+  import io._
  
-  def this() = this(ActorSystem("PeerSpec"))
   lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
   lazy val trackerId = "ABCDEFGHIJKLMNOPQRST"
- 
-  override def afterAll {
-    TestKit.shutdownActorSystem(system)
-  }
 
   val exceptionListener = TestProbe()
   val messagesListener = TestProbe()
-  val superviser = system.actorOf(Props(new Superviser(exceptionListener.ref, messagesListener.ref)))
+  val superviser = newSuperviser(messagesListener.ref, exceptionListener.ref)
 
   val giveDownloadTask: PartialFunction[ActorRef, Unit] = { case r =>
     r.tell(Peer.DownloadPiece(0, 0, 100500), superviser)
@@ -241,22 +228,7 @@ class PeerActorSpec(_system: ActorSystem) extends TestKit(_system) with Implicit
     }
   }
 
-  class Superviser(exceptionsListener: ActorRef, messagesListener: ActorRef) extends Actor {
-    override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) { case e =>
-      exceptionsListener ! e
-      Stop
-    }
-    def receive = {
-      case (p: Props, name: String) => sender() ! context.actorOf(p, name)
-      case p: Props => sender() ! context.actorOf(p)
-      case m => messagesListener ! m
-    }
-  }
-  class Forwarder(target: ActorRef) extends Actor {
-    def receive = {
-      case m => target forward m
-    }
-  }
+  
 }
 
 

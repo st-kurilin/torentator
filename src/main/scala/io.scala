@@ -87,13 +87,13 @@ class NetworkConnection(remote: java.net.InetSocketAddress) extends Actor {
 
   def connected(connection: ActorRef): Receive = {
     case Send(data, _, _) => 
-      connection ! Send(ByteString(data.toArray))
+      connection ! Tcp.Write(ByteString(data.toArray))
     case Tcp.CommandFailed(w: Send) =>
       throw new ConnectionFailed("write failed (O/S buffer was full?)")
     case Tcp.Received(data) =>
       listener ! Received(data)
     case Close =>
-      connection ! Close
+      connection ! Tcp.Close
     case _: Tcp.ConnectionClosed =>
       context stop self
   }
