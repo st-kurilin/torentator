@@ -31,20 +31,48 @@ object Torrent {
       else manifest.pieceLength
     Props(classOf[PieceHandler], pieceIndex, pieceActualLength, manifest.pieces(pieceIndex))
   }
+
+  type PeerPropsCreator = (String, Seq[Byte], Props) => Props
 }
 
-class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Actor with akka.actor.ActorLogging {
+trait ComposableActor extends Actor {
+  var receivers = Array.empty[Receive]
+  final var supervisorDesiders = Array.empty[Decider]  
+
+  final val supervisorDesider = new Decider {
+    def res: Decider = supervisorDesiders reduce ((l, r) => l orElse r)
+    def apply(x: Throwable): Directive = res(x)
+    def isDefinedAt(x: Throwable): Boolean = res isDefinedAt x
+  }
+
+  final val receive = new Receive {
+    def apply(x: Any) = receivers foreach { f =>
+      if (f isDefinedAt x) f(x)
+    }
+    def isDefinedAt(x: Any) = receivers exists (_.isDefinedAt(x))
+  }
+
+  final override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false)(supervisorDesider)
+
+  def receiver(v: Receive) { receivers = receivers :+ v } 
+  def decider(v: Decider) { supervisorDesiders = supervisorDesiders :+ v }
+}
+
+class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFactory: Torrent.PeerPropsCreator)
+  extends ComposableActor with akka.actor.ActorLogging with PeerManager {
   import Torrent._
   import Peer._
   import scala.concurrent.duration._
   import context.dispatcher  
 
-  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = true) {
+  def this(_manifest: Manifest, destination: java.nio.file.Path) =
+    this(_manifest, destination, Peer.props)
+
+  decider {
     case e: PieceHashCheckFailed => Restart
-    case e: Throwable => Escalate
   }
 
-  val manifest = _manifest match {
+  def manifest: SingleFileManifest = _manifest match {
     case m : SingleFileManifest => m
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
@@ -54,48 +82,51 @@ class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Acto
    pieceLength: {}. number of pieces {}""" + destination, manifest.pieceLength,
    java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
-  val Tick = "tick"
-  context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
+  val TorrentTick = "TorrentTick"
+  context.system.scheduler.schedule(1.second, 5.seconds, self, TorrentTick)
 
   for (piece <- 0 until numberOfPieces)
     context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
 
-  val peerManager = context.actorOf(Props(classOf[PeerManager], manifest))
   val destinationFile = context.actorOf(Io.fileConnectionProps(destination))
 
   var downloadedPieces = Set.empty[Int]
 
-  def receive: Receive = {
-    case m: Torrent.AskForPeer =>
-      peerManager forward m
+  receiver {
     case PieceCollected(index, data) =>
       downloadedPieces += index
       destinationFile ! io.Send(data, index * manifest.pieceLength.toInt)
-    case Tick =>
+    case TorrentTick =>
       log.debug(s"Downloaded {}/{} : {}",
         downloadedPieces.size, numberOfPieces, downloadedPieces.mkString(", "))
-    case x => log.debug("Torrent received {}", x) 
   }
 }
 
-class PeerManager(manifest: Manifest) extends Actor with akka.actor.ActorLogging {
+trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
   import context.dispatcher
 
   type Address = java.net.InetSocketAddress
+
+  def manifest: Manifest
+  def peerFactory: PeerPropsCreator
+
   case class NewAddresses(addresses: List[Address])
 
-  val Tick = "tick"
-  context.system.scheduler.schedule(0.second, 1.second, self, Tick)
+  val PeerManagerTick = "PeerManagerTick"
+  context.system.scheduler.schedule(0.second, 1.second, self, PeerManagerTick)
 
-  override val supervisorStrategy = OneForOneStrategy(loggingEnabled = true) {
+  decider {
     case e: Peer.DownloadingFailed if peerOwners contains sender() =>
       peerOwners(sender()) forward e
       Stop
     case e: Peer.DownloadingFailed =>
       Stop
-    case _ => Escalate
+    case e if peerOwners contains sender() =>
+      log.warning("Unexpected exception occur for peer: {}", e)
+      peerOwners(sender()).tell(Peer.DownloadingFailed(e.getMessage), sender)
+      Stop
   }
 
   var used = Set.empty[Address]
@@ -112,7 +143,7 @@ class PeerManager(manifest: Manifest) extends Actor with akka.actor.ActorLogging
   def createPeer(address: Address) = {
     val addressEnscaped = address.toString.replaceAll("/", "")  
     used = used + address
-    val props = Peer.props(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
+    val props = peerFactory(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
   }
 
@@ -124,14 +155,14 @@ class PeerManager(manifest: Manifest) extends Actor with akka.actor.ActorLogging
     available = available.tail
   }
 
-  def receive = {
+  receiver {
     case Torrent.AskForPeer(asker) if !available.isEmpty =>
       respodWithAvailablePeer(asker, sender())
     case m: Torrent.AskForPeer =>
       waiting = (sender(), m)  :: waiting    
     case NewAddresses(addresses) => 
       available = addresses
-    case Tick => 
+    case PeerManagerTick => 
       waiting = waiting dropWhile { 
         case (sender, Torrent.AskForPeer(asker)) if !available.isEmpty => 
           respodWithAvailablePeer(asker, sender)

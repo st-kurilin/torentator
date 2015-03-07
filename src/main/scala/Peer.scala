@@ -5,6 +5,7 @@ import akka.actor.SupervisorStrategy._
 
 
 object Peer {
+
   def props(trackerId: String, infoHash: Seq[Byte], connection: Props) = {
     val hs = handshakeMessage(trackerId, infoHash)
     Props(classOf[Peer], hs, connection)
@@ -167,7 +168,6 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
               case _ =>
             }
             
-            
           case c: DownloadPiece =>
             assigment = Some((sender() -> c))
             quality = 5
@@ -176,12 +176,15 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
                 download(begin)
               case _ =>
             }
-          //case m: KeepAlive =>
           case m: Bitfield => 
           case Choke => quality -= 2
           case KeepAlive =>
           case m => log.debug("Received message during downloading {}", m)
         }
+      case m =>
+        log.debug("""Received message that can not be parsed. 
+          Message might be splitted into parts. Will be ignored: {}""", m)
+
     }
     case Tick if quality > 0 => quality -= 1
     case Tick =>
