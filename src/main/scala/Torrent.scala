@@ -10,6 +10,7 @@ import io._
 
 object Torrent {
   case class AskForPeer(asker: ActorRef)
+  case class PieceCollected(pieceIndex: Int, data: Seq[Byte])
 
   case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
         PieceHashCheckFailed for piece ${piece}.
@@ -31,7 +32,7 @@ object Torrent {
   }
 }
 
-class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
+class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Actor {
   import Torrent._
   import Peer._
   import scala.concurrent.duration._
@@ -58,14 +59,16 @@ class Torrent(_manifest: Manifest, destination: java.io.File) extends Actor {
     context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
 
   val peerManager = context.actorOf(Props(classOf[PeerManager], manifest))
+  val destinationFile = context.actorOf(Io.fileConnectionProps(destination))
 
   var downloadedPieces = Set.empty[Int]
 
   def receive: Receive = {
     case m: Torrent.AskForPeer =>
       peerManager forward m
-    case PieceDownloaded(index) =>
+    case PieceCollected(index, data) =>
       downloadedPieces += index
+      destinationFile ! io.Send(data, index * manifest.pieceLength.toInt)
     case Tick =>
       println(s"Downloaded ${downloadedPieces.size}/${numberOfPieces} : ${downloadedPieces.mkString(", ")}")
     case x => println("Torrent received" + x) 
@@ -176,7 +179,7 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
   def receive = {
     case PieceDownloaded(index) =>
       checkPieceHashes(piece, pieceData, hash)
-      torrent ! PieceDownloaded(index)
+      torrent ! PieceCollected(index, pieceData)
       
       context become {
         case Tick => println(s"Piece ${piece} downloaded.")
