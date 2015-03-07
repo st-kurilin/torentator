@@ -114,7 +114,6 @@ class BytesAdder extends Actor {
         val msg = akka.util.ByteString(bytes(sum).toArray)
         sender() ! Write(msg)
       case PeerClosed     => context stop self
-      case x => println("???" + x)
     }
   }
 }

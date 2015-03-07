@@ -33,7 +33,7 @@ object Torrent {
   }
 }
 
-class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Actor {
+class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Actor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
   import scala.concurrent.duration._
@@ -50,8 +50,9 @@ class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Acto
   }
     
   val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
-  println("pieceLength: " + manifest.pieceLength)
-  println("piece actual number: " + java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
+  log.info("""Downloading torrent to {}
+   pieceLength: {}. number of pieces {}""" + destination, manifest.pieceLength,
+   java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
   val Tick = "tick"
   context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
@@ -71,12 +72,13 @@ class Torrent(_manifest: Manifest, destination: java.nio.file.Path) extends Acto
       downloadedPieces += index
       destinationFile ! io.Send(data, index * manifest.pieceLength.toInt)
     case Tick =>
-      println(s"Downloaded ${downloadedPieces.size}/${numberOfPieces} : ${downloadedPieces.mkString(", ")}")
-    case x => println("Torrent received" + x) 
+      log.debug(s"Downloaded {}/{} : {}",
+        downloadedPieces.size, numberOfPieces, downloadedPieces.mkString(", "))
+    case x => log.debug("Torrent received {}", x) 
   }
 }
 
-class PeerManager(manifest: Manifest) extends Actor {
+class PeerManager(manifest: Manifest) extends Actor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
   import context.dispatcher
@@ -144,7 +146,7 @@ class PeerManager(manifest: Manifest) extends Actor {
   }
 }
 
-class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
+class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
 
@@ -161,7 +163,7 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
   val torrent = context.parent
 
   def newPeer: Future[ActorRef] = (torrent ? new AskForPeer(self)).mapTo[ActorRef].recoverWith {
-   case f => println(s"failed on peer creation ${f}"); newPeer
+   case f => log.debug("failed on peer creation {}", f); newPeer
   }
 
   def download(peer: Future[ActorRef], offset: Int) = newPeer onSuccess { case peer =>
@@ -183,8 +185,8 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
       torrent ! PieceCollected(index, pieceData)
       
       context become {
-        case Tick => println(s"Piece ${piece} downloaded.")
-        case r => println(s"Piece ${piece} downloaded. received: ${r}")
+        case Tick => log.debug("Piece {} downloaded.", piece)
+        case r => log.debug("Piece {} downloaded. received: {}", piece, r)
       }
     case BlockDownloaded(pieceIndex, offset, content) => 
       require(downloaded == offset,
@@ -192,11 +194,13 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor {
       pieceData = pieceData ++ content
     case DownloadingFailed(reason: String) =>
       if (!done) {
-        println(s"piece: ${piece}. asked for replacement: reason: ${reason} dwn: ${downloaded};  peer ${sender()}")
+        log.debug("piece: {}. asked for replacement: reason: {} dwn: {};  peer {}",
+          piece, reason, downloaded, sender())
         sender() ! PoisonPill
         download(newPeer, downloaded)
       }
     case Tick =>
-      println(s"Piece ${piece}. Downloaded ${100*downloaded/totalSize}% [${downloaded}/${totalSize} B]. ${peer}")
+      log.debug("Piece {}. Downloaded {}% [{}/{} B]. {}",
+        Array(piece, 100 * downloaded / totalSize, downloaded, totalSize, peer))
   }
 }

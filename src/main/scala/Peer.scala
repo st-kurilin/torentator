@@ -113,7 +113,7 @@ object PeerMessage {
   }
 }
 
-class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor {
+class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor with akka.actor.ActorLogging {
   import Peer._
   import PeerMessage._
   import torentator.io
@@ -180,7 +180,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor {
           case m: Bitfield => 
           case Choke => quality -= 2
           case KeepAlive =>
-          case m =>  println("RECEIVED MSG: " + m) 
+          case m => log.debug("Received message during downloading {}", m)
         }
     }
     case Tick if quality > 0 => quality -= 1
@@ -201,21 +201,20 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor {
       case KeepAlive =>
       case Choke => 
       case Piece(index, begin, block) if begin + block.length > downloaded =>
-        println(s"got i:${index} b:${begin} size:${block.length}")
+        log.debug("got i:{} b:{} size:${}", index, begin, block.length)
         data = data ++ block
         quality += 2
         listener ! BlockDownloaded(index, begin, block)
         download(begin + block.length)
       case m: Piece =>
-      case b: Bitfield => println("received Bitfield")
-      case _ => println(s"startDownload got msg: ${msg}")
+      case b: Bitfield =>
     }
     require(downloaded <= assigment.length)
     if (downloaded == assigment.length) {
       listener ! PieceDownloaded(assigment.pieceIndex)
       done = true
       quality += 2
-      println("DONE")
+      log.debug("Piece {} downloaded", assigment.pieceIndex)
       context become { case _ => }
     } else {
       send(Request(assigment.pieceIndex, downloaded, java.lang.Math.min(16384, (assigment.length - downloaded).toInt)))
@@ -230,7 +229,6 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor {
                   old = None
                 case x =>
                   old = Some(x)
-                  //println(s"squashing during ${assigment.index}")
               }
             case None => 
               old = Some(bs)
@@ -238,12 +236,12 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor {
         }
         case Tick if quality >= 0 =>
           quality-= 1
-          println(s"tick piece: ${assigment.pieceIndex}; downloaded: ${downloaded}; quality: ${quality}; // ${self}")
+          log.debug("tick piece: {}; downloaded: {}; quality: {}; // ${}", assigment.pieceIndex, downloaded, quality, self)
         case Tick if !done & quality < 0 =>
-          println(s"tick piece: ${assigment.pieceIndex}; quality: ${quality}; downloaded: ${downloaded}; ask for replacement  // ${self}")
+          log.debug("tick piece: {}; downloaded: {}; ask for replacement // ${}", assigment.pieceIndex, downloaded, self)
           listener ! DownloadingFailed("Quality is too low") 
           context become { case _ => }
-        case Tick => println(s"tick piece: ${assigment.pieceIndex}; quality: ${quality}; done: ${done}")
+        case Tick =>
       }
     }
   }

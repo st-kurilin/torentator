@@ -54,7 +54,6 @@ class TrackerSpec extends FlatSpec with Matchers {
         case Success(announce) =>
             assert (announce.interval !== 0)
             announce.peers should not be  empty
-            println(announce.peers)
         case f => fail(f.toString)
     }
   }
