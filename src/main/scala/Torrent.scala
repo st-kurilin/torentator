@@ -9,6 +9,13 @@ import scala.concurrent.{Future, Promise}
 import io._
 import peer._
 
+case object StatusRequest
+
+sealed trait Status
+case object Downloading
+case object Downloaded
+
+
 object Torrent {
   case class AskForPeer(asker: ActorRef)
   case class PieceCollected(pieceIndex: Int, data: Seq[Byte])
@@ -96,6 +103,9 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFac
     case PieceCollected(index, data) =>
       downloadedPieces += index
       destinationFile ! io.Send(data, index * manifest.pieceLength.toInt)
+    case StatusRequest =>
+      if (downloadedPieces.size == numberOfPieces) sender() ! Downloaded
+      else sender() ! Downloading
     case TorrentTick =>
       log.debug(s"Downloaded {}/{} : {}",
         downloadedPieces.size, numberOfPieces, downloadedPieces.mkString(", "))
