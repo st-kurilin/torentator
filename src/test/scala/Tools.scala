@@ -14,6 +14,8 @@ abstract class ActorSpec(_system: ActorSystem) extends TestKit(_system) with Imp
   def newSuperviser(messageListener: ActorRef, exceptionListener: ActorRef) =
     system.actorOf(Props(new Superviser(messageListener, exceptionListener)))
 
+  def forwarderProps(target: ActorRef) = Props(new Forwarder(target))
+
   implicit val timeout = Timeout(1.second)
 
   override def afterAll {

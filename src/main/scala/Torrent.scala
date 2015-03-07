@@ -7,6 +7,7 @@ import scala.concurrent.duration._
 import scala.concurrent.{Future, Promise}
 
 import io._
+import peer._
 
 object Torrent {
   case class AskForPeer(asker: ActorRef)
@@ -109,7 +110,7 @@ class PeerManager(manifest: Manifest) extends Actor {
   def createPeer(address: Address) = {
     val addressEnscaped = address.toString.replaceAll("/", "")  
     used = used + address
-    val props = Peer.props(Tracker.id, manifest, Io.tcpConnectionProps(address))
+    val props = Peer.props(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
   }
 

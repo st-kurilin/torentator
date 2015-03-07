@@ -1,20 +1,22 @@
-package torentator
+package torentator.peer
 
 import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
 
 
 object Peer {
-  def props(id: String, manifest: Manifest, connection: Props) = 
-    Props(classOf[Peer], id, manifest, connection)
+  def props(trackerId: String, infoHash: Seq[Byte], connection: Props) = {
+    val hs = handshakeMessage(trackerId, infoHash)
+    Props(classOf[Peer], hs, connection)
+  }
 
-  def handshakeMessage(peerId: Seq[Byte], manifest: Manifest): Seq[Byte] = {
+  def handshakeMessage(peerIdStr: String, infoHash: Seq[Byte]): Seq[Byte] = {
+    val peerId = peerIdStr.getBytes("ISO-8859-1")
     require(peerId.length == 20)
-    require(manifest.hash.length == 20)
+    require(infoHash.length == 20)
     val pstrlen = Seq(19).map(_.toByte)
     val pstr = "BitTorrent protocol".getBytes("ISO-8859-1")
     val reserved = Seq(0, 0, 0, 0, 0, 0, 0, 0).map(_.toByte)
-    val infoHash = manifest.hash
     pstrlen ++ pstr ++ reserved ++ infoHash ++ peerId
   }
 
@@ -111,9 +113,10 @@ object PeerMessage {
   }
 }
 
-class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor {
+class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor {
   import Peer._
   import PeerMessage._
+  import torentator.io
   import scala.language.postfixOps
   import scala.concurrent.duration._
   import context.dispatcher
@@ -128,8 +131,7 @@ class Peer(id: String, manifest: Manifest, connectionProps: Props) extends Actor
   val connection = context.actorOf(connectionProps, "connection")
 
   var hsResponce: Option[Seq[Byte]] = None
-  val hs = handshakeMessage(id.getBytes("ISO-8859-1"), manifest)
-  connection ! io.Send(hs)    
+  connection ! io.Send(handshakeMessage)    
 
   var assigment: Option[(ActorRef, DownloadPiece)] = None
   var choked = true

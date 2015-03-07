@@ -1,4 +1,4 @@
-package torentator
+package torentator.peer
 
 
 
@@ -10,8 +10,8 @@ class PeerPoorSpec extends FlatSpec with Matchers {
   import akka.util.ByteString
 
   "Peer" should "create proper handshake" in {
-    val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
-    var msg = Peer.handshakeMessage("ABCDEFGHIJKLMNOPQRST".getBytes, manifest)
+    val manifest = torentator.Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
+    var msg = Peer.handshakeMessage("ABCDEFGHIJKLMNOPQRST", manifest.hash)
 
     assert (msg.length === 68)
   }
@@ -70,16 +70,16 @@ class PeerPoorSpec extends FlatSpec with Matchers {
 }
 
 
-class PeerActorSpec extends ActorSpec("PeerSpec") {
+class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
   import akka.util.{ByteString => BString}
   import akka.actor.{Actor, ActorRef, Props, ReceiveTimeout}
   import akka.pattern.ask
   import akka.testkit.TestProbe
   import system.dispatcher
-  import io._
+  import torentator.io._
  
-  lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
-  lazy val trackerId = "ABCDEFGHIJKLMNOPQRST"
+  val infoHash = byteArray(20)
+  val trackerId = "ABCDEFGHIJKLMNOPQRST"
 
   val exceptionListener = TestProbe()
   val messagesListener = TestProbe()
@@ -96,7 +96,7 @@ class PeerActorSpec extends ActorSpec("PeerSpec") {
   def throwIfAnyReceived: PartialFunction[Any, Unit] = { case x => throw new RuntimeException(x.toString)  }
 
   def newPeer(connection: Props) = {
-    val peer = superviser ? Peer.props(trackerId, manifest, connection)
+    val peer = superviser ? Peer.props(trackerId, infoHash, connection)
     peer onFailure {
       case f => fail(f)
     }
@@ -105,9 +105,9 @@ class PeerActorSpec extends ActorSpec("PeerSpec") {
 
   "Peer" must {
     "sends hanshake just after creation" in {
-      var expectedHandshake = Peer.handshakeMessage(trackerId.getBytes, manifest)
+      var expectedHandshake = Peer.handshakeMessage(trackerId, infoHash)
       val connection = TestProbe()
-      val peer = system.actorOf(Peer.props(trackerId, manifest, Props(new Forwarder(connection.ref))))
+      val peer = system.actorOf(Peer.props(trackerId, infoHash, forwarderProps(connection.ref)))
 
       connection.expectMsg(Send(expectedHandshake))
     }
@@ -200,10 +200,10 @@ class PeerActorSpec extends ActorSpec("PeerSpec") {
 
     "should be able to handle splitted pieces" in {
       val connectionMock = Props(new Actor {
-        def receive = { case io.Send(hs, _, _) =>
+        def receive = { case Send(hs, _, _) =>
             sender() ! hs
-            sender() ! io.Received(hs)
-            sender() ! io.Received(messageAsBytes(PeerMessage.Unchoke))
+            sender() ! Received(hs)
+            sender() ! Received(messageAsBytes(PeerMessage.Unchoke))
             context become {
               case Send(PeerMessage(m), _, _) => m match {
                 case PeerMessage.Request(index, begin, length) =>
