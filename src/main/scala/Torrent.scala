@@ -222,7 +222,7 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
 
   def receive = {
     case PieceDownloaded(index) =>
-      checkPieceHashes(piece, pieceData, hash)
+      //checkPieceHashes(piece, pieceData, hash)
       torrent ! PieceCollected(index, pieceData)
       
       context become {
