@@ -10,22 +10,22 @@ object Tracker {
       return scala.io.Source.fromURL(url, "ISO-8859-1").mkString
     } catch {
       case e: Throwable if attempt > 10 => throw e
-      case e: Throwable => 
+      case e: Throwable =>
         Thread.sleep(100)
         get(url, attempt + 1)
     }
   }
-    
+
   val id = "ABCDEFGHIJKLMNOPQRST"
 
   def announce(manifest: Manifest)(implicit ec: scala.concurrent.ExecutionContext): Future[Announce] = Future {
     val hash = Bencoding.urlEncode(manifest.hash)
     val rest = "port=6881&uploaded=0&downloaded=0&left=727955456&event=started&numwant=100&no_peer_id=1&compact=1"
-    
+
     // sample http://torrent.ubuntu.com:6969/announce
     //?info_hash=%16%19%EC%C97%3C69%F4%EE%3E%26%168%F2%9B3%A6%CB%D6
     //&peer_id=ABCDEFGHIJKLMNOPQRST&port=6881&uploaded=0&downloaded=0&left=727955456
-    //&event=started&numwant=100&no_peer_id=1&compact=1  
+    //&event=started&numwant=100&no_peer_id=1&compact=1
     val url = s"${manifest.announce}?info_hash=${hash}&peer_id=${id}&${rest}"
     val content = get(url)
 
@@ -43,10 +43,10 @@ object Tracker {
             Success(new Announce(interval, peers))
           case f => Failure(new RuntimeException(
             s"Could not parse announce. Short peers description expected, but [${f}] found."))
-      } 
+      }
       case f => Failure(new RuntimeException(
             s"Could not parse announce. Dictionary expected, but [${f}] found."))
-    }    
+    }
   }
 
   def parseHostAndPort(shortForm: Seq[Byte]): InetSocketAddress = {

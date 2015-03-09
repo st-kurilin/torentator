@@ -1,6 +1,6 @@
 package torentator
 
-object Bencoding {  
+object Bencoding {
   sealed trait Bencode
   case class BString(value: String) extends Bencode
   case class BInteger(value: Long) extends Bencode
@@ -14,14 +14,14 @@ object Bencoding {
   }
 
   object TextString {
-    def unapply(x: Bencode) = x match {
+    def unapply(x: Bencode): Option[String] = x match {
       case BString(str) => Some(str)
       case _ => None
     }
   }
-  
+
   object BinaryString {
-    def unapply(x: Bencode) = x match {
+    def unapply(x: Bencode): Option[Seq[Byte]] = x match {
       case BString(str) => Some(str.getBytes("ISO-8859-1"))
       case _ => None
     }
@@ -32,7 +32,7 @@ object Bencoding {
   object Parser extends JavaTokenParsers {
     def anyChar: Parser[Char] = new Parser[Char] {
       override def apply(in: Input): ParseResult[Char] = {
-        return Success(in.first, in.rest)
+        Success(in.first, in.rest)
       }
     }
     def str: Parser[BString] = (wholeNumber ^^ {_.toInt}) >> { n=> ":" ~> repN(n, anyChar)} ^^ {
@@ -40,7 +40,7 @@ object Bencoding {
     }
     def int: Parser[BInteger] = ("i" ~>  wholeNumber <~ "e") ^^ {case x => BInteger(x.toInt)}
     def list: Parser[BList] = ("l" ~>  rep(expr) <~ "e") ^^ {case x => BList(x)}
-    def dict: Parser[BDictionary] = ("d" ~> rep(repN(2, expr)) <~ "e") ^^ {case x => 
+    def dict: Parser[BDictionary] = ("d" ~> rep(repN(2, expr)) <~ "e") ^^ {case x =>
       BDictionary(x.foldLeft(Map.empty[String, Bencode]) {
         case (r, BString(key)::(value:Bencode)::Nil) =>
           r + (key -> value)
@@ -48,7 +48,8 @@ object Bencoding {
       })
     }
     def expr: Parser[Bencode] = str | int | list | dict
-    def apply(str: String) = {
+
+    def apply(str: String): util.Try[Bencode] = {
       parseAll(expr, str) match {
         case Success(r, _) => util.Success(r)
         case Failure(r, o) => util.Failure(new RuntimeException(
@@ -58,12 +59,12 @@ object Bencoding {
       }
     }
   }
-  
+
   def parse(str: String): util.Try[Bencode] = {
     Parser.apply(str)
   }
 
-  def urlEncode(hash: Seq[Byte]) = {
+  def urlEncode(hash: Seq[Byte]): String = {
     val ints = hash.map(_.toInt & 0xFF)
     val asIs = Set('-', '.', '_') map (_.toInt)
     val asIsRanges = Set(
@@ -86,7 +87,7 @@ object Bencoding {
     out.toString();
   }
 
-  def infoHash(str: Seq[Byte]) = {
+  def infoHash(str: Seq[Byte]): Seq[Byte] = {
     def subindex(big: Seq[Byte], bi: Int, small: Seq[Byte], si: Int): Option[Int] = {
       require(bi >= 0 && si >= 0)
       val (sl, bl) = (small.size, big.size)
@@ -107,22 +108,20 @@ object Bencoding {
     hash(seq)
   }
 
-  def hash(data: Seq[Byte]) = java.security.MessageDigest.getInstance("SHA1").digest(data.toArray)
+  def hash(data: Seq[Byte]): Seq[Byte] = java.security.MessageDigest.getInstance("SHA1").digest(data.toArray)
 
   def parseByteArray(s: String): Seq[Byte] = {
+    def parseHex(x: String): Byte = Integer.parseInt(x, 16).toByte
     val o: Tuple2[String, List[Byte]] = (("", List.empty[Byte]))
     val (_, r) = s.foldRight(o) { (x, r) =>
       val (cur, res) = r
-      if (cur.isEmpty) {
-        (x.toString, res)
-      } else {
-        ("", Integer.parseInt(x + cur, 16).toByte :: res)
-      }
+      if (cur.isEmpty) (x.toString, res)
+      else ("", parseHex(x + cur) :: res)
     }
     r
   }
 
-  def getBytes(str: String) = {
+  def getBytes(str: String): Seq[Byte] = {
     str.getBytes("ISO-8859-1")
   }
 }

@@ -7,12 +7,12 @@ object Manifest {
   import util.Try
   def apply(location: java.io.File): util.Try[Manifest] = {
     val content = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(location.getPath))
-    parse(new String(content, "ISO-8859-1")) flatMap { encoded => 
+    parse(new String(content, "ISO-8859-1")) flatMap { encoded =>
       Manifest(encoded, infoHash(content))
     }
   }
 
-  def f(msg: String) = {
+  private def f(msg: String) = {
     Failure(new RuntimeException(msg))
   }
 
@@ -20,15 +20,19 @@ object Manifest {
     val (ss: Seq[Success[T]]@unchecked, fs: Seq[Failure[T]]@unchecked) =
     xs.partition(_.isSuccess)
 
-    if (fs.isEmpty) Success(ss map (_.get))
-    else Failure[Seq[T]](fs(0).exception) // Only keep the first failure
+    if (fs.isEmpty) {
+      Success(ss map (_.get))
+    } else {
+      Failure[Seq[T]](fs(0).exception) // Only keep the first failure
+    }
   }
 
   def apply(encoded: Bencode, hash: Seq[Byte]): util.Try[Manifest] = {
     def decodeAnnounce(encoded: Bencode) = encoded match {
       case BString(s) => Success(s)
-      case e => f(s"Manifest 'info' expected to be string, but [${e}] found.")   
+      case e => f(s"Manifest 'info' expected to be string, but [${e}] found.")
     }
+    val hashSize = 20
     def decodeInfo(announce: String, encoded: Bencode) = encoded match {
       case BDictionary(info) =>
         (info.get("name"),
@@ -39,16 +43,16 @@ object Manifest {
           case (Some(BString(name)),
             Some(BInteger(piece)),
             Some(BInteger(length)),
-            None, 
-            Some(BinaryString(hashes))) if hashes.size % 20 == 0 => 
-            val pieceHashes = hashes.grouped(20).toSeq.map(_.toSeq)
+            None,
+            Some(BinaryString(hashes))) if hashes.size % hashSize == 0 =>
+            val pieceHashes = hashes.grouped(hashSize).toSeq.map(_.toSeq)
             Success(new SingleFileManifest(name, new java.net.URI(announce),
               hash, pieceHashes, piece, length))
-          case (Some(BString(name)), 
+          case (Some(BString(name)),
             Some(BInteger(piece)),
             None,
             Some(BList(filesList)),
-            _) => 
+            _) =>
             decodeFiles(filesList) map { case f =>
               new MultiFileManifest(name, new java.net.URI(announce), hash, piece, f)
             }
@@ -63,20 +67,20 @@ object Manifest {
     def decodeFiles(encoded: Seq[Bencode]) = {
       flatten(encoded map {
         case BDictionary(m) => (m.get("length"), m.get("path")) match {
-          case (Some(BInteger(length)), Some(BList(path))) => 
+          case (Some(BInteger(length)), Some(BList(path))) =>
             flatten(path.map {
               case BString(e) => Success(e)
-              case e => Failure(new RuntimeException("""'manifest.info.files.path' 
+              case e => Failure(new RuntimeException("""'manifest.info.files.path'
                 elements expected to be strings but [${e}] found"""))
             }) map { l =>
               l.foldLeft("") {
                 case (r, e) if r.isEmpty => e
                 case (r, e) => s"${r}/${e}"
               }
-            } map { p => 
+            } map { p =>
               (length, p)
             }
-          case e => f(s"""File in 'manifest.info.files' expected to be dictinary 
+          case e => f(s"""File in 'manifest.info.files' expected to be dictinary
             with 'length' and 'path' but [${e}] found.""")
         }
         case e => f(s"""File in 'manifest.info.files'
@@ -99,7 +103,7 @@ sealed trait Manifest {
   def pieceLength: Long
   def hash: Seq[Byte]
 }
-case class SingleFileManifest(name: String, announce: java.net.URI, 
+case class SingleFileManifest(name: String, announce: java.net.URI,
   hash: Seq[Byte], pieces: Seq[Seq[Byte]], pieceLength: Long, length: Long) extends Manifest
 case class MultiFileManifest (name: String, announce: java.net.URI,
   hash: Seq[Byte], pieceLength: Long, files: Seq[(Long, String)]) extends Manifest

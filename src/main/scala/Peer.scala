@@ -6,7 +6,7 @@ import akka.actor.SupervisorStrategy._
 
 object Peer {
 
-  def props(trackerId: String, infoHash: Seq[Byte], connection: Props) = {
+  def props(trackerId: String, infoHash: Seq[Byte], connection: Props): Props = {
     val hs = handshakeMessage(trackerId, infoHash)
     Props(classOf[Peer], hs, connection)
   }
@@ -69,7 +69,7 @@ object PeerMessage {
         case 3 => NotInterested
         case 4 if data.length == 4 => new Have(readInt(data))
         case 5 => new Bitfield(data)
-        case 6  if data.length == 12 => 
+        case 6  if data.length == 12 =>
           val parsed = data.grouped(4).map(readInt(_)).toArray
           val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
           new Request(index, begin, length)
@@ -88,7 +88,7 @@ object PeerMessage {
     }
   }
   def toBytes(x: PeerMessage): Seq[Byte] = {
-    def intToByteArray(int: Int, size: Int = 4): Seq[Byte] = 
+    def intToByteArray(int: Int, size: Int = 4): Seq[Byte] =
       java.nio.ByteBuffer.allocate(4).putInt(int).array().drop(4 - size)
     def seq(ints: Int*) = ints.map(_.toByte)
 
@@ -101,12 +101,12 @@ object PeerMessage {
       case Have(x) => seq(0, 0, 0, 5, 4) ++ intToByteArray(x)
       case Bitfield(data) => intToByteArray(data.length + 1) ++
         seq(5) ++ data
-      case Request(index, begin, length) => seq(0, 0, 0, 13, 6) ++ 
+      case Request(index, begin, length) => seq(0, 0, 0, 13, 6) ++
         intToByteArray(index) ++ intToByteArray(begin) ++
         intToByteArray(length)
       case Piece(index, begin, block) => intToByteArray(block.length + 9) ++
         seq(7) ++ intToByteArray(index) ++ intToByteArray(begin) ++ block
-      case Cancel(index, begin, length) => seq(0, 0, 0, 13, 8) ++ 
+      case Cancel(index, begin, length) => seq(0, 0, 0, 13, 8) ++
         intToByteArray(index) ++ intToByteArray(begin) ++
         intToByteArray(length)
       case Port(x) => seq(0, 0, 0, 3, 9) ++ intToByteArray(x, 2)
@@ -132,7 +132,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
   val connection = context.actorOf(connectionProps, "connection")
 
   var hsResponce: Option[Seq[Byte]] = None
-  connection ! io.Send(handshakeMessage)    
+  connection ! io.Send(handshakeMessage)
 
   var assigment: Option[(ActorRef, DownloadPiece)] = None
   var choked = true
@@ -151,45 +151,43 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
     case Tick if quality > 0 => quality -= 1
     case Tick =>
       context become {case _ => }
-      throw new DownloadingFailed("Failed due timeout before handshake")   
-
+      throw new DownloadingFailed("Failed due timeout before handshake")
   }
 
   def handshaked: Receive = {
     case io.Received(c) => c match {
-      case PeerMessage(m) => 
+      case PeerMessage(m) =>
         m match {
-          case Unchoke => 
+          case Unchoke =>
             choked = false
             quality += 2
             assigment match {
-              case Some ( (_, DownloadPiece(_, begin, _))) => 
+              case Some ((_, DownloadPiece(_, begin, _))) =>
                 download(begin)
               case _ =>
             }
-            
           case c: DownloadPiece =>
             assigment = Some((sender() -> c))
             quality = 5
             if (!choked) assigment match {
-              case Some ( (_, DownloadPiece(_, begin, _))) => 
+              case Some ((_, DownloadPiece(_, begin, _))) =>
                 download(begin)
               case _ =>
             }
-          case m: Bitfield => 
+          case m: Bitfield =>
           case Choke => quality -= 2
           case KeepAlive =>
           case m => log.debug("Received message during downloading {}", m)
         }
       case m =>
-        log.debug("""Received message that can not be parsed. 
+        log.debug("""Received message that can not be parsed.
           Message might be splitted into parts. Will be ignored: {}""", m)
 
     }
     case Tick if quality > 0 => quality -= 1
     case Tick =>
       context become {case _ => }
-      throw new DownloadingFailed("Failed due timeout after handshake, but before download started")   
+      throw new DownloadingFailed("Failed due timeout after handshake, but before download started")
   }
 
   var data = Seq.empty[Byte]
@@ -202,7 +200,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
 
     def handleMsd(msg : PeerMessage) = msg match {
       case KeepAlive =>
-      case Choke => 
+      case Choke =>
       case Piece(index, begin, block) if begin + block.length > downloaded =>
         log.debug("got i:{} b:{} size:${}", index, begin, block.length)
         data = data ++ block
@@ -233,7 +231,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
                 case x =>
                   old = Some(x)
               }
-            case None => 
+            case None =>
               old = Some(bs)
             }
         }
@@ -242,7 +240,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
           log.debug("tick piece: {}; downloaded: {}; quality: {}; // ${}", assigment.pieceIndex, downloaded, quality, self)
         case Tick if !done & quality < 0 =>
           log.debug("tick piece: {}; downloaded: {}; ask for replacement // ${}", assigment.pieceIndex, downloaded, self)
-          listener ! DownloadingFailed("Quality is too low") 
+          listener ! DownloadingFailed("Quality is too low")
           context become { case _ => }
         case Tick =>
       }

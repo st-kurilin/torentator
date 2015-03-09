@@ -1,6 +1,5 @@
 package torentator.io
 
-
 case object Connected
 case class ConnectionFailed(msg: String) extends RuntimeException
 
@@ -16,10 +15,10 @@ object Io {
   import java.net.InetSocketAddress
   import java.nio.file.Path
 
-  def tcpConnectionProps(remote: InetSocketAddress) = 
+  def tcpConnectionProps(remote: InetSocketAddress): Props =
     Props(classOf[NetworkConnection], remote)
 
-  def fileConnectionProps(path: Path, expectedSize: Int = 16 * 1024) = 
+  def fileConnectionProps(path: Path, expectedSize: Int = 16 * 1024): Props =
     Props(classOf[FileConnection], path, expectedSize)
 }
 
@@ -42,10 +41,10 @@ class FileConnection(path: java.nio.file.Path, expectedSize: Int) extends Actor 
   val Tick = "tick"
   context.system.scheduler.schedule(0.second, 1.second, self, Tick)
 
-  
+
   var waiting = List.empty[(JFuture[Integer], ActorRef, Int)]
-  
-  def receive = {
+
+  def receive: Receive = {
     case Send(data, offset, confirmId) =>
       waiting = (channel.write(ByteBuffer.wrap(data.toArray), offset), sender(), confirmId) :: waiting
 
@@ -54,7 +53,9 @@ class FileConnection(path: java.nio.file.Path, expectedSize: Int) extends Actor 
         if (future.isDone) {
           waiter ! Sended(confirmId)
           false
-        } else true
+        } else {
+          true
+        }
       }
   }
 }
@@ -68,14 +69,14 @@ class NetworkConnection(remote: java.net.InetSocketAddress) extends Actor {
 
   val listener = context.parent
   IO(Tcp) ! Tcp.Connect(remote)
- 
-  def receive = connecting(List.empty)
+
+  def receive: Receive = connecting(List.empty)
 
   def connecting(msgQueue: List[Any]) : Receive = {
     case Tcp.CommandFailed(_: Tcp.Connect) =>
       context become {case _ => }
       throw new ConnectionFailed("connect failed to " + remote)
- 
+
     case c @ Tcp.Connected(remote, local) =>
       val connection = sender()
       connection ! Tcp.Register(self)
@@ -86,7 +87,7 @@ class NetworkConnection(remote: java.net.InetSocketAddress) extends Actor {
   }
 
   def connected(connection: ActorRef): Receive = {
-    case Send(data, _, _) => 
+    case Send(data, _, _) =>
       connection ! Tcp.Write(ByteString(data.toArray))
     case Tcp.CommandFailed(w: Send) =>
       throw new ConnectionFailed("write failed (O/S buffer was full?)")

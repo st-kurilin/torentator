@@ -1,4 +1,4 @@
-package torentator 
+package torentator
 
 import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, OneForOneStrategy, PoisonPill }
 import akka.actor.SupervisorStrategy._
@@ -23,7 +23,7 @@ object Torrent {
   case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
         PieceHashCheckFailed for piece ${piece}.
         Expected: ${expected.mkString(", ")}.
-        Actual  : ${actual.mkString(", ")}""") 
+        Actual  : ${actual.mkString(", ")}""")
 
   def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
     val actual = Bencoding.hash(data).toSeq
@@ -44,7 +44,7 @@ object Torrent {
 
 trait ComposableActor extends Actor {
   var receivers = Array.empty[Receive]
-  final var supervisorDesiders = Array.empty[Decider]  
+  final var supervisorDesiders = Array.empty[Decider]
 
   final val supervisorDesider = new Decider {
     def res: Decider = supervisorDesiders reduce ((l, r) => l orElse r)
@@ -61,7 +61,7 @@ trait ComposableActor extends Actor {
 
   final override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false)(supervisorDesider)
 
-  def receiver(v: Receive) { receivers = receivers :+ v } 
+  def receiver(v: Receive) { receivers = receivers :+ v }
   def decider(v: Decider) { supervisorDesiders = supervisorDesiders :+ v }
 }
 
@@ -70,7 +70,7 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFac
   import Torrent._
   import Peer._
   import scala.concurrent.duration._
-  import context.dispatcher  
+  import context.dispatcher
 
   def this(_manifest: Manifest, destination: java.nio.file.Path) =
     this(_manifest, destination, Peer.props)
@@ -83,7 +83,7 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFac
     case m : SingleFileManifest => m
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
-    
+
   val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
   log.info("""Downloading torrent to {}
    pieceLength: {}. number of pieces {}""" + destination, manifest.pieceLength,
@@ -146,12 +146,12 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
     map ( _.peers.filter(!used.contains(_)).toList).
     map(NewAddresses(_)).
     recoverWith{case _ => newAddresses}
-    
+
   var waiting = List.empty[(ActorRef, AskForPeer)]
   var peerOwners = Map.empty[ActorRef, ActorRef]
 
   def createPeer(address: Address) = {
-    val addressEnscaped = address.toString.replaceAll("/", "")  
+    val addressEnscaped = address.toString.replaceAll("/", "")
     used = used + address
     val props = peerFactory(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
@@ -169,18 +169,18 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
     case Torrent.AskForPeer(asker) if !available.isEmpty =>
       respodWithAvailablePeer(asker, sender())
     case m: Torrent.AskForPeer =>
-      waiting = (sender(), m)  :: waiting    
-    case NewAddresses(addresses) => 
+      waiting = (sender(), m)  :: waiting
+    case NewAddresses(addresses) =>
       available = addresses
-    case PeerManagerTick => 
-      waiting = waiting dropWhile { 
-        case (sender, Torrent.AskForPeer(asker)) if !available.isEmpty => 
+    case PeerManagerTick =>
+      waiting = waiting dropWhile {
+        case (sender, Torrent.AskForPeer(asker)) if !available.isEmpty =>
           respodWithAvailablePeer(asker, sender)
           true
         case _ => false
       }
       if (available.size < 2) {
-        newAddresses onSuccess { case a => 
+        newAddresses onSuccess { case a =>
           self ! a
         }
       }
@@ -224,12 +224,12 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
     case PieceDownloaded(index) =>
       //checkPieceHashes(piece, pieceData, hash)
       torrent ! PieceCollected(index, pieceData)
-      
+
       context become {
         case Tick => log.debug("Piece {} downloaded.", piece)
         case r => log.debug("Piece {} downloaded. received: {}", piece, r)
       }
-    case BlockDownloaded(pieceIndex, offset, content) => 
+    case BlockDownloaded(pieceIndex, offset, content) =>
       require(downloaded == offset,
           s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${offset}+")
       pieceData = pieceData ++ content

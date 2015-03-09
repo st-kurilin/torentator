@@ -1,6 +1,6 @@
 scalaVersion := "2.11.5"
 
-scalacOptions ++= Seq("-feature")
+scalacOptions ++= Seq("-feature", "-deprecation", "-unchecked")
 
 libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.0.2"
 
