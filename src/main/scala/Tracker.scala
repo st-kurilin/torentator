@@ -1,13 +1,22 @@
-package torentator
+package torentator.tracker
+
+import torentator._ 
+
+case class RequestAnnounce(manifest: Manifest)
+case class AnnounceReceived(announce: Tracker.Announce)
 
 object Tracker {
   import util.{Try, Success, Failure}
   import Bencoding._
   import java.net.InetSocketAddress
   import scala.concurrent.Future
+  import scala.concurrent.Future
+
+  val props = akka.actor.Props(classOf[Tracker])
+
   def get(url: String, attempt: Int = 0): String = {
     try {
-      return scala.io.Source.fromURL(url, "ISO-8859-1").mkString
+      scala.io.Source.fromURL(url, "ISO-8859-1").mkString
     } catch {
       case e: Throwable if attempt > 10 => throw e
       case e: Throwable =>
@@ -59,5 +68,20 @@ object Tracker {
   }
 
   case class Announce(interval: Long, peers: Set[InetSocketAddress])
+}
+
+import akka.actor.Actor
+
+class Tracker extends Actor {
+  import Tracker._
+  import context.dispatcher
+
+  def receive: Receive = {
+    case RequestAnnounce(manifest) =>
+      val requester = sender()
+      announce(manifest) onSuccess {case a =>
+        requester ! AnnounceReceived(a)
+      }
+  }
 }
 

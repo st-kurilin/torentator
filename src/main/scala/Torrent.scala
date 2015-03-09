@@ -65,7 +65,8 @@ trait ComposableActor extends Actor {
   def decider(v: Decider) { supervisorDesiders = supervisorDesiders :+ v }
 }
 
-class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFactory: Torrent.PeerPropsCreator)
+class Torrent (_manifest: Manifest, destination: java.nio.file.Path,
+  val peerFactory: Torrent.PeerPropsCreator, val trackerProps: Props)
   extends ComposableActor with akka.actor.ActorLogging with PeerManager {
   import Torrent._
   import Peer._
@@ -73,7 +74,7 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFac
   import context.dispatcher
 
   def this(_manifest: Manifest, destination: java.nio.file.Path) =
-    this(_manifest, destination, Peer.props)
+    this(_manifest, destination, Peer.props, tracker.Tracker.props)
 
   decider {
     case e: PieceHashCheckFailed => Restart
@@ -115,12 +116,16 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path, val peerFac
 trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
+  import torentator.tracker._
   import context.dispatcher
+
+  implicit val timeout = akka.util.Timeout(3.seconds)
 
   type Address = java.net.InetSocketAddress
 
   def manifest: Manifest
   def peerFactory: PeerPropsCreator
+  def trackerProps: Props
 
   case class NewAddresses(addresses: List[Address])
 
@@ -142,10 +147,12 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   var used = Set.empty[Address]
   var available = List.empty[Address]
 
-  def newAddresses: Future[NewAddresses] = Tracker.announce(manifest).
-    map ( _.peers.filter(!used.contains(_)).toList).
-    map(NewAddresses(_)).
-    recoverWith{case _ => newAddresses}
+  lazy val tracker = context.actorOf(trackerProps)
+  def newAddresses: Future[NewAddresses] = {
+    def announce = (tracker ? RequestAnnounce(manifest)).mapTo[AnnounceReceived]
+    def retrieveNewPeers = (response: AnnounceReceived) => response.announce.peers.filter(!used.contains(_)).toList
+    announce.map(retrieveNewPeers).map(NewAddresses(_)).recoverWith{case _ => newAddresses}
+  }
 
   var waiting = List.empty[(ActorRef, AskForPeer)]
   var peerOwners = Map.empty[ActorRef, ActorRef]

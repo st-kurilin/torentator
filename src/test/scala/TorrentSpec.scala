@@ -6,10 +6,21 @@ import scala.concurrent.duration._
 import akka.actor.{Actor, ActorRef, Props}
 
 class TorrentSpec extends ActorSpec("TorrentSpec") {
-  lazy val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
-  lazy val trackerId = "ABCDEFGHIJKLMNOPQRST"
   import Torrent._
   import akka.testkit.TestProbe
+
+  val manifest: Manifest = {
+    val pieceLength = Math.pow(2, 10).toInt
+    val numberOfPieces = 3
+    val hashSize = 20
+    SingleFileManifest(
+      name = "test manifest",
+      announce = new java.net.URI("fake://fake"),
+      hash = Seq.fill(hashSize)(1.toByte),
+      pieces = Seq.fill(10)(Seq.fill(hashSize)(2.toByte)),
+      pieceLength = pieceLength,
+      length = (numberOfPieces * pieceLength.toInt) - pieceLength.toInt / 2)
+  }
 
   def perfectPeer: Torrent.PeerPropsCreator = (trackerId: String, infoHash: Seq[Byte], connection: Props)
     => Props(new PerfectPeer())
@@ -27,8 +38,17 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     => Props(new UnreliablePeer())
 
   def newTorrent(peerCreator: Torrent.PeerPropsCreator) = {
+    val trackerMock = Props(new Actor {
+      def receive = {
+         case tracker.RequestAnnounce(manifest) =>
+          def randInt = scala.util.Random.nextInt(250) + 1
+          val randPeers = List.fill(10)(new java.net.InetSocketAddress(s"${randInt}.${randInt}.${randInt}.${randInt}", 10)).toSet
+          sender() ! tracker.AnnounceReceived(tracker.Tracker.Announce(0, randPeers))
+      }
+    })
     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
-    system.actorOf(Props(classOf[Torrent], manifest, destination, peerCreator), "torrent" + scala.util.Random.nextInt) 
+    val name = "torrent" + scala.util.Random.nextInt
+    system.actorOf(Props(classOf[Torrent], manifest, destination, peerCreator, trackerMock), name) 
   }
 
   def newTest(peerCreator: Torrent.PeerPropsCreator): (TestProbe, ActorRef) 
@@ -65,7 +85,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       client.ignoreMsg {
         case Downloading => torrent.tell(StatusRequest, client.ref); true
       }
-      client.expectMsg(10.second, Downloaded)
+      client.expectMsg(20.second, Downloaded)
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloaded)
@@ -115,7 +135,7 @@ class PerfectPeer extends Actor {
 class BlockDownloaderPeer extends Actor {
   def receive = {
     case peer.Peer.DownloadPiece(index, offset, length) =>
-      val blockSize = Math.ceil(length.toInt / 10).toInt
+      val blockSize = Math.ceil(length / 10).toInt
       val nextBlockOffset = offset + blockSize
       sender() ! peer.Peer.BlockDownloaded(index, offset, List.fill(blockSize)(7).map(_.toByte))
       if (nextBlockOffset >= length) {
