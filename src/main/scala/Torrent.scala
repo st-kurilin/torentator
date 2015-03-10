@@ -28,11 +28,11 @@ object Torrent {
   def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
     val actual = Bencoding.hash(data).toSeq
     val expected = expectedHash.toSeq
-    if (actual != expected) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
+    if (actual.toSeq != expected.toSeq) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
   }
 
   def pieceHandlerProps(pieceIndex: Int, manifest: SingleFileManifest) = {
-    val numberOfPieces = java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
+    val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
     val pieceActualLength = if (pieceIndex == numberOfPieces - 1)
         manifest.length % manifest.pieceLength
       else manifest.pieceLength
@@ -85,9 +85,9 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path,
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
 
-  val numberOfPieces = 5//java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt
+  val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
   log.info("""Downloading torrent to {}
-   pieceLength: {}. number of pieces {}""" + destination, manifest.pieceLength,
+   pieceLength: {}. number of pieces {}""", destination, manifest.pieceLength,
    java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
   val TorrentTick = "TorrentTick"
@@ -229,7 +229,7 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
 
   def receive = {
     case PieceDownloaded(index) =>
-      //checkPieceHashes(piece, pieceData, hash)
+      checkPieceHashes(piece, pieceData, hash)
       torrent ! PieceCollected(index, pieceData)
 
       context become {
