@@ -48,6 +48,9 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
   def wrongDataPeer: Torrent.PeerPropsCreator = (trackerId: String, infoHash: Seq[Byte], connection: Props)
     => Props(new WrongDataPeer())
 
+  def wrongOnceStrictPeer: Torrent.PeerPropsCreator = (trackerId: String, infoHash: Seq[Byte], connection: Props)
+    => Props(new WrongOnceStrictPeer())
+
   def newTorrent(peerCreator: Torrent.PeerPropsCreator) = {
     val trackerMock = Props(new Actor {
       def receive = {
@@ -62,8 +65,11 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     system.actorOf(Props(classOf[Torrent], manifest, destination, peerCreator, trackerMock), name) 
   }
 
-  def newTest(peerCreator: Torrent.PeerPropsCreator): (TestProbe, ActorRef) 
-    = (TestProbe(), newTorrent(peerCreator))
+  var failureListener = TestProbe()
+  def newTest(peerCreator: Torrent.PeerPropsCreator): (TestProbe, ActorRef) = {
+    failureListener = TestProbe()
+    (TestProbe(), newTorrent(peerCreator))
+  }
 
   "Torrent" must {
     "download file using perfect peers" in {
@@ -76,6 +82,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloaded)
+
+      assert(!failureListener.msgAvailable)
     }
 
     "not download file if hash sum check for piece failing" in {
@@ -87,6 +95,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloading)
+
+      assert(!failureListener.msgAvailable)
     }
 
     "download file using by block downloader peer" in {
@@ -99,6 +109,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloaded)
+
+      assert(!failureListener.msgAvailable)
     }
 
     "download file using peers that download only one block" in {
@@ -111,6 +123,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloaded)
+
+      assert(!failureListener.msgAvailable)
     }
 
     "should not download if peers doesn't provide anything" in {
@@ -122,6 +136,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloading)
+
+      assert(!failureListener.msgAvailable)
     }
 
     "download with unreliable peers" in {
@@ -134,6 +150,22 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
       torrent.tell(StatusRequest, client.ref)
       client.expectMsg(Downloaded)
+
+      assert(!failureListener.msgAvailable)
+    }
+
+    "recover from failing piece hash check" in {
+      val (client, torrent) = newTest(wrongOnceStrictPeer)
+      torrent.tell(StatusRequest, client.ref)
+      client.ignoreMsg {
+        case Downloading => torrent.tell(StatusRequest, client.ref); true
+      }
+      client.expectMsg(50.second, Downloaded)
+
+      torrent.tell(StatusRequest, client.ref)
+      client.expectMsg(Downloaded)
+
+      assert(!failureListener.msgAvailable)
     }
 
     //for development only
@@ -156,12 +188,31 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
   class WrongDataPeer extends Actor {
     def receive = {
       case peer.Peer.DownloadPiece(index, offset, length) =>
-        //if (index == 0) sender() ! peer.Peer.BlockDownloaded(index, offset, Seq.fill(length.toInt)(13))
-        //else sender() ! peer.Peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt))
-        sender() ! peer.Peer.BlockDownloaded(index, offset, Seq.fill(content(index).size)(13.toByte))
+        if (index == 0) sender() ! peer.Peer.BlockDownloaded(index, offset, Seq.fill(content(index).size)(13.toByte))
+        else sender() ! peer.Peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt))
         sender() ! peer.Peer.PieceDownloaded(index)
     }
   }
+
+  var piecesProvided = Set.empty[Int]
+  var mistaked = false
+
+  class WrongOnceStrictPeer extends Actor {
+    def receive = {
+      case peer.Peer.DownloadPiece(index, offset, length) =>
+        if (piecesProvided.contains(index)) failureListener.ref ! s"Piece ${index} was requested twice"
+        val data = readContent(index, offset, length.toInt)
+        if (index != 1 || mistaked) {
+          sender() ! peer.Peer.BlockDownloaded(index, offset, data)
+          piecesProvided += index
+        } else {
+          sender() ! peer.Peer.BlockDownloaded(index, offset, Seq.fill(length.toInt)(13))
+          mistaked = true
+        }
+        sender() ! peer.Peer.PieceDownloaded(index)
+    }
+  }
+
 
   class BlockDownloaderPeer extends Actor {
     def receive = {
