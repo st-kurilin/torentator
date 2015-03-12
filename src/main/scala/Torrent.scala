@@ -237,9 +237,9 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
         case r => log.debug("Piece {} downloaded. received: {}", piece, r)
       }
     case BlockDownloaded(pieceIndex, offset, content) =>
-      require(downloaded == offset,
+      require(downloaded <= offset + content.length,
           s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${offset}+")
-      pieceData = pieceData ++ content
+      pieceData = pieceData ++ content.drop((downloaded - offset).toInt)
     case DownloadingFailed(reason: String) =>
       if (!done) {
         log.debug("piece: {}. asked for replacement: reason: {} dwn: {};  peer {}",
