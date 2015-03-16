@@ -5,6 +5,7 @@ import akka.actor.SupervisorStrategy._
 import akka.pattern.ask
 import scala.concurrent.duration._
 import scala.concurrent.{Future, Promise}
+import java.nio.file.Path
 
 import io._
 import peer._
@@ -65,7 +66,8 @@ trait ComposableActor extends Actor {
   def decider(v: Decider) { supervisorDesiders = supervisorDesiders :+ v }
 }
 
-class Torrent (_manifest: Manifest, destination: java.nio.file.Path,
+class Torrent (_manifest: Manifest, destination: Path,
+  fileCC: FileConnectionCreator,
   val peerFactory: Torrent.PeerPropsCreator, val trackerProps: Props)
   extends ComposableActor with akka.actor.ActorLogging with PeerManager {
   import Torrent._
@@ -73,11 +75,13 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path,
   import scala.concurrent.duration._
   import context.dispatcher
 
-  def this(_manifest: Manifest, destination: java.nio.file.Path) =
-    this(_manifest, destination, Peer.props, tracker.Tracker.props)
+  def this(_manifest: Manifest, destination: Path) =
+    this(_manifest, destination, Io, Peer.props, tracker.Tracker.props)
 
   decider {
-    case e: PieceHashCheckFailed => Restart
+    case e: PieceHashCheckFailed =>
+      log.warning("Failed on piece hash check: {}", e)
+      Restart
   }
 
   def manifest: SingleFileManifest = _manifest match {
@@ -87,7 +91,7 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path,
 
   val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
   log.info("""Downloading torrent to {}
-   pieceLength: {}. number of pieces {}""", destination, manifest.pieceLength,
+   pieceLength: {}. number of pieces {}""", "destination", manifest.pieceLength,
    java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
   val TorrentTick = "TorrentTick"
@@ -96,7 +100,7 @@ class Torrent (_manifest: Manifest, destination: java.nio.file.Path,
   for (piece <- 0 until numberOfPieces)
     context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
 
-  val destinationFile = context.actorOf(Io.fileConnectionProps(destination))
+  val destinationFile = context.actorOf(fileCC.fileConnectionProps(destination))
 
   var downloadedPieces = Set.empty[Int]
 
@@ -214,7 +218,7 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
    case f => log.debug("failed on peer creation {}", f); newPeer
   }
 
-  def download(peer: Future[ActorRef], offset: Int) = newPeer onSuccess { case peer =>
+  def download(peer: Future[ActorRef], offset: Int) = peer onSuccess { case peer =>
     peer ! DownloadPiece(piece, offset, totalSize)
     this.peer = peer
   }

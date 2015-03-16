@@ -10,7 +10,14 @@ case class Received(data: Seq[Byte])
 
 case object Close
 
-object Io {
+trait FileConnectionCreator {
+  import akka.actor.Props
+  import java.nio.file.Path
+
+  def fileConnectionProps(path: Path, expectedSize: Int = 16 * 1024): Props
+}
+
+object Io extends FileConnectionCreator {
   import akka.actor.Props
   import java.net.InetSocketAddress
   import java.nio.file.Path
@@ -18,7 +25,7 @@ object Io {
   def tcpConnectionProps(remote: InetSocketAddress): Props =
     Props(classOf[NetworkConnection], remote)
 
-  def fileConnectionProps(path: Path, expectedSize: Int = 16 * 1024): Props =
+  def fileConnectionProps(path: Path, expectedSize: Int): Props =
     Props(classOf[FileConnection], path, expectedSize)
 }
 
