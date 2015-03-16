@@ -39,8 +39,6 @@ object Torrent {
       else manifest.pieceLength
     Props(classOf[PieceHandler], pieceIndex, pieceActualLength, manifest.pieces(pieceIndex))
   }
-
-  type PeerPropsCreator = (String, Seq[Byte], Props) => Props
 }
 
 trait ComposableActor extends Actor {
@@ -68,7 +66,7 @@ trait ComposableActor extends Actor {
 
 class Torrent (_manifest: Manifest, destination: Path,
   fileCC: FileConnectionCreator,
-  val peerFactory: Torrent.PeerPropsCreator, val trackerProps: Props)
+  val peerFactory: peer.PeerPropsCreator, val trackerProps: Props)
   extends ComposableActor with akka.actor.ActorLogging with PeerManager {
   import Torrent._
   import Peer._
@@ -76,7 +74,7 @@ class Torrent (_manifest: Manifest, destination: Path,
   import context.dispatcher
 
   def this(_manifest: Manifest, destination: Path) =
-    this(_manifest, destination, Io, Peer.props, tracker.Tracker.props)
+    this(_manifest, destination, Io, peer.Peer, tracker.Tracker.props)
 
   decider {
     case e: PieceHashCheckFailed =>
@@ -137,14 +135,14 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   context.system.scheduler.schedule(0.second, 1.second, self, PeerManagerTick)
 
   decider {
-    case e: Peer.DownloadingFailed if peerOwners contains sender() =>
+    case e: peer.DownloadingFailed if peerOwners contains sender() =>
       peerOwners(sender()) forward e
       Stop
-    case e: Peer.DownloadingFailed =>
+    case e: peer.DownloadingFailed =>
       Stop
     case e if peerOwners contains sender() =>
       log.warning("Unexpected exception occur for peer: {}", e)
-      peerOwners(sender()).tell(Peer.DownloadingFailed(e.getMessage), sender)
+      peerOwners(sender()).tell(peer.DownloadingFailed(e.getMessage), sender)
       Stop
   }
 
@@ -164,7 +162,7 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   def createPeer(address: Address) = {
     val addressEnscaped = address.toString.replaceAll("/", "")
     used = used + address
-    val props = peerFactory(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
+    val props = peerFactory.props(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
   }
 

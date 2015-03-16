@@ -86,7 +86,7 @@ class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
   val superviser = newSuperviser(messagesListener.ref, exceptionListener.ref)
 
   val giveDownloadTask: PartialFunction[ActorRef, Unit] = { case r =>
-    r.tell(Peer.DownloadPiece(0, 0, 100500), superviser)
+    r.tell(DownloadPiece(0, 0, 100500), superviser)
   }
 
   def messageAsBytes(msg: PeerMessage.PeerMessage) = PeerMessage.toBytes(msg)
@@ -193,7 +193,7 @@ class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
 
       exceptionListener.expectNoMsg()
       messagesListener.fishForMessage(1.second) {
-        case Peer.PieceDownloaded(piece) => false
+        case PieceDownloaded(piece) => false
         case m => true
       }
     }
@@ -222,7 +222,7 @@ class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
 
       exceptionListener.expectNoMsg()
       messagesListener.fishForMessage(1.second) {
-        case Peer.PieceDownloaded(piece) => false
+        case PieceDownloaded(piece) => false
         case _ => true
       }
     }

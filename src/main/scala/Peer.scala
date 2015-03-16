@@ -1,11 +1,17 @@
 package torentator.peer
 
-import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, PoisonPill }
-import akka.actor.SupervisorStrategy._
+import akka.actor.Props
 
+case class DownloadPiece(pieceIndex: Int, begin: Int, length: Long)
+case class BlockDownloaded(pieceIndex: Int, offset: Long, content: Seq[Byte])
+case class PieceDownloaded(pieceIndex: Int)
+case class DownloadingFailed(reason: String) extends RuntimeException
 
-object Peer {
+trait PeerPropsCreator {
+  def props(trackerId: String, infoHash: Seq[Byte], connection: Props): Props
+}
 
+object Peer extends PeerPropsCreator {
   def props(trackerId: String, infoHash: Seq[Byte], connection: Props): Props = {
     val hs = handshakeMessage(trackerId, infoHash)
     Props(classOf[Peer], hs, connection)
@@ -19,12 +25,7 @@ object Peer {
     val pstr = "BitTorrent protocol".getBytes("ISO-8859-1")
     val reserved = Seq(0, 0, 0, 0, 0, 0, 0, 0).map(_.toByte)
     pstrlen ++ pstr ++ reserved ++ infoHash ++ peerId
-  }
-
-  case class DownloadPiece(pieceIndex: Int, begin: Int, length: Long)
-  case class BlockDownloaded(pieceIndex: Int, offset: Long, content: Seq[Byte])
-  case class PieceDownloaded(pieceIndex: Int)
-  case class DownloadingFailed(reason: String) extends RuntimeException
+  } 
 }
 
 object PeerMessage {
@@ -41,8 +42,6 @@ object PeerMessage {
   case class Piece(index: Int, begin: Int, block: Seq[Byte]) extends PeerMessage
   case class Cancel(index: Int, begin: Int, length: Int) extends PeerMessage
   case class Port(port: Int) extends PeerMessage
-
-
 
   def unapply(x: Seq[Byte]): Option[PeerMessage] = {
     def takeInt(bs: Seq[Byte]) = {
@@ -113,6 +112,10 @@ object PeerMessage {
     }
   }
 }
+
+
+import akka.actor.{ Actor, ActorRef, AllForOneStrategy, PoisonPill }
+import akka.actor.SupervisorStrategy._
 
 class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor with akka.actor.ActorLogging {
   import Peer._
