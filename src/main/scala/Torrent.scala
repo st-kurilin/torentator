@@ -104,8 +104,8 @@ class Torrent (_manifest: Manifest, destination: Path,
 
   receiver {
     case PieceCollected(index, data) =>
-      downloadedPieces += index
-      destinationFile ! io.Send(data, index * manifest.pieceLength.toInt)
+      destinationFile ! io.Send(data, index * manifest.pieceLength.toInt, index)
+    case io.Sended(index) => downloadedPieces += index
     case StatusRequest =>
       if (downloadedPieces.size == numberOfPieces) sender() ! Downloaded
       else sender() ! Downloading
@@ -241,6 +241,7 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
     case BlockDownloaded(pieceIndex, offset, content) =>
       require(downloaded <= offset + content.length,
           s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${offset}+")
+      require(downloaded == offset)
       pieceData = pieceData ++ content.drop((downloaded - offset).toInt)
     case DownloadingFailed(reason: String) =>
       if (!done) {

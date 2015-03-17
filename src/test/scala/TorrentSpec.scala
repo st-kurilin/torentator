@@ -16,7 +16,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     val numberOfPieces = 5
     val totalLength = numberOfPieces * pieceLength.toInt - pieceLength.toInt / 2
     val hashSize = 20
-    val content = Seq.tabulate(totalLength)(x => (x % 100).toByte).grouped(pieceLength).toSeq
+    val content = Seq.tabulate(totalLength)(x => (x % 100 + 1).toByte).grouped(pieceLength).toSeq
     val m = SingleFileManifest(
       name = "test manifest",
       announce = new java.net.URI("fake://fake"),
@@ -55,13 +55,16 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     "download file using by block downloader peer" in {
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
-          val blockSize = Math.ceil(length.toDouble / 4).toInt
-          val nextBlockOffset = offset + blockSize
+          val blockSize = Math.ceil(length.toDouble / 3).toInt
           val numberOfBlocks = Math.ceil(length.toDouble / blockSize).toInt
-          for (block <- 0 to numberOfBlocks) {
-            val currentBlockSize = Math.min(blockSize, length - block * blockSize).toInt
-            val currentOffset = offset + block * blockSize
-            sender() ! peer.BlockDownloaded(index, currentOffset, readContent(index, currentOffset, currentBlockSize))  
+          
+          for {
+            block <- 0 to numberOfBlocks
+            currentBlockSize = Math.min(blockSize, length - block * blockSize).toInt
+            currentOffset = offset + block * blockSize
+            if currentBlockSize > 0
+          } {
+            sender() ! peer.BlockDownloaded(index, currentOffset, readContent(index, currentOffset, currentBlockSize))
           }
           sender() ! peer.PieceDownloaded(index)
         }
@@ -71,13 +74,13 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     "download file using peers that download only one block" in {
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
-          val blockSize = Math.ceil(length / 3).toInt
-          val nextBlockOffset = offset + blockSize
-          sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, blockSize))
-          if (nextBlockOffset >= length) {
-            sender() ! peer.PieceDownloaded(index)
+          val blockSize = Math.ceil(length.toDouble / 3).toInt
+          if (offset + blockSize < length) {
+            sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, blockSize))
+            sender() ! peer.DownloadingFailed(s"test failing on [${index}] ${offset} ~ ${readContent(index, offset, blockSize)}")
           } else {
-            sender() ! peer.DownloadingFailed("test failing")
+            sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt - offset))
+            sender() ! peer.PieceDownloaded(index)
           }
         }
       })}
@@ -137,11 +140,12 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     // }
   }
 
-  case class TestContext(client: TestProbe, torrent: ActorRef, failureListener: TestProbe, targetFile: ArrayBuffer[Byte])
+  case class TestContext(client: TestProbe, torrent: ActorRef, failureListener: TestProbe, targetFileListener: TestProbe)
+  case class FileContent(data: Seq[Byte])
 
   def newTest(actProvider: (PeerCreatorContext) => Props): TestContext = {
-    val targetFile = new ArrayBuffer[Byte]()
     val failureListener = TestProbe()
+    val targetFileListener = TestProbe()
 
     val trackerMock = Props(new Actor {
       def receive = {
@@ -155,10 +159,14 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       import java.nio.file.Path
       def fileConnectionProps(path: Path, expectedSize: Int): Props = {
         Props(new Actor {
-          def receive = { case io.Send(block, offset, _) =>
-            val preinsert = Math.max(offset + block.size - targetFile.size, 0)
-            targetFile.insertAll(targetFile.size, Seq.fill(preinsert)(0.toByte))
-            for (i <- 0 until block.size) targetFile.update(offset + i, block(i))
+          val targetFile = new ArrayBuffer[Byte]()
+          def receive = {
+            case io.Send(block, offset, id) =>
+              val preinsert = Math.max(offset + block.size - targetFile.size, 0)
+              targetFile.insertAll(targetFile.size, Seq.fill(preinsert)(0.toByte))
+              for (i <- 0 until block.size) targetFile.update(offset + i, block(i))
+              targetFileListener.ref ! FileContent(targetFile.toArray)
+              sender() ! io.Sended(id)
           }
         })
       }
@@ -172,16 +180,18 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
     val name = "torrent" + scala.util.Random.nextInt
-    println("creating torrent " + name)
     val torrent = system.actorOf(Props(classOf[Torrent], manifest, destination, fileMock, peerCreator, trackerMock), name) 
 
     val client = TestProbe()
-    println("Creating client: " + client.ref)
-    TestContext(client, torrent, failureListener, targetFile)
+    TestContext(client, torrent, failureListener, targetFileListener)
   }
 
   def shouldDownloadUsing(actProvider: (PeerCreatorContext) => Props): Unit = {
-    val TestContext(client, torrent, failureListener, targetFile) = newTest(actProvider)
+    def lastAvailableMessage(tb: TestProbe, default: AnyRef = null): Any = if (tb.msgAvailable) {
+      lastAvailableMessage(tb, tb.receiveOne(0.seconds))
+    } else default
+
+    val TestContext(client, torrent, failureListener, targetFileListener) = newTest(actProvider)
     
     torrent.tell(StatusRequest, client.ref)
     client.fishForMessage(10.seconds) {
@@ -193,9 +203,15 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     client.expectMsg(Downloaded)
 
     assert(!failureListener.msgAvailable)
-    println(s"${targetFile.size} - ${content.flatten.size}")
-    assert(content.flatten.size == targetFile.size)
-    assert(content.flatten == targetFile.toSeq)
+
+    val expectedContent = content.flatten
+
+    val actualContent = lastAvailableMessage(targetFileListener) match {
+      case FileContent(c) => c
+      case o => Seq.empty[Byte]
+    }
+
+    assert(expectedContent.sameElements(actualContent))
   }
 
   def shouldNotDownloadUsing(actProvider: (PeerCreatorContext) => Props): Unit = {
