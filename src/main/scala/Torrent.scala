@@ -7,20 +7,24 @@ import scala.concurrent.duration._
 import scala.concurrent.{Future, Promise}
 import java.nio.file.Path
 
-import io._
 import peer._
 
+//API messages
+//Get torrent download status
 case object StatusRequest
 
 sealed trait Status
+//Downloading in progeress
 case object Downloading
+//Downloading completed
 case object Downloaded
 
+//Internal messages
+case class PeerRequest(requester: ActorRef)
+case class PieceCollected(pieceIndex: Int, data: Seq[Byte])
+case class PieceSaved(pieceIndex: Int)
 
 object Torrent {
-  case class AskForPeer(asker: ActorRef)
-  case class PieceCollected(pieceIndex: Int, data: Seq[Byte])
-
   case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
         PieceHashCheckFailed for piece ${piece}.
         Expected: ${expected.mkString(", ")}.
@@ -41,6 +45,7 @@ object Torrent {
   }
 }
 
+//Util class. Used to organise torrent actor in composable way
 trait ComposableActor extends Actor {
   var receivers = Array.empty[Receive]
   final var supervisorDesiders = Array.empty[Decider]
@@ -64,17 +69,20 @@ trait ComposableActor extends Actor {
   def decider(v: Decider) { supervisorDesiders = supervisorDesiders :+ v }
 }
 
-class Torrent (_manifest: Manifest, destination: Path,
-  fileCC: FileConnectionCreator,
-  val peerFactory: peer.PeerPropsCreator, val trackerProps: Props)
-  extends ComposableActor with akka.actor.ActorLogging with PeerManager {
+//The main actor per torrent. 
+class Torrent (
+  _manifest: Manifest,
+  destination: Path,
+  fileCC: io.FileConnectionCreator,
+  val peerFactory: peer.PeerPropsCreator,
+  val trackerProps: Props)
+  extends ComposableActor with PeerManager  with StatusTracker with FileFlusher
+  with akka.actor.ActorLogging {
+
   import Torrent._
-  import Peer._
-  import scala.concurrent.duration._
-  import context.dispatcher
 
   def this(_manifest: Manifest, destination: Path) =
-    this(_manifest, destination, Io, peer.Peer, tracker.Tracker.props)
+    this(_manifest, destination, io.Io, peer.Peer, tracker.Tracker.props)
 
   decider {
     case e: PieceHashCheckFailed =>
@@ -82,39 +90,60 @@ class Torrent (_manifest: Manifest, destination: Path,
       Restart
   }
 
-  def manifest: SingleFileManifest = _manifest match {
+  val manifest: SingleFileManifest = _manifest match {
     case m : SingleFileManifest => m
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
 
   val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
+  val destinationFile = context.actorOf(fileCC.fileConnectionProps(destination))
+
   log.info("""Downloading torrent to {}
    pieceLength: {}. number of pieces {}""", "destination", manifest.pieceLength,
    java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
-  val TorrentTick = "TorrentTick"
-  context.system.scheduler.schedule(1.second, 5.seconds, self, TorrentTick)
-
   for (piece <- 0 until numberOfPieces)
     context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
+}
 
-  val destinationFile = context.actorOf(fileCC.fileConnectionProps(destination))
+//Responds on status requests.
+trait StatusTracker extends ComposableActor with akka.actor.ActorLogging {
+  import scala.concurrent.duration._
+  import context.dispatcher
 
-  var downloadedPieces = Set.empty[Int]
+  def numberOfPieces: Int
+  private var downloadedPieces = Set.empty[Int]
+
+  private val Tick = "StatusTrackerTick"
+  context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
 
   receiver {
-    case PieceCollected(index, data) =>
-      destinationFile ! io.Send(data, index * manifest.pieceLength.toInt, index)
-    case io.Sended(index) => downloadedPieces += index
+    case PieceSaved(index) =>
+      downloadedPieces += index
+    case StatusRequest if downloadedPieces.size == numberOfPieces =>
+      sender() ! Downloaded
     case StatusRequest =>
-      if (downloadedPieces.size == numberOfPieces) sender() ! Downloaded
-      else sender() ! Downloading
-    case TorrentTick =>
+      sender() ! Downloading
+    case Tick =>
       log.debug(s"Downloaded {}/{} : {}",
         downloadedPieces.size, numberOfPieces, downloadedPieces.mkString(", "))
   }
 }
 
+//Writes downloaded data to file system piece by piece.
+trait FileFlusher extends ComposableActor with akka.actor.ActorLogging {
+  def manifest: Manifest
+  def destinationFile: ActorRef
+
+  receiver {
+    case PieceCollected(index, data) =>
+      destinationFile ! io.Send(data, index * manifest.pieceLength.toInt, index)
+    case io.Sended(index) => 
+      self ! PieceSaved(index)
+  }
+}
+
+//Creates and replaces peers
 trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
@@ -131,8 +160,8 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
 
   case class NewAddresses(addresses: List[Address])
 
-  val PeerManagerTick = "PeerManagerTick"
-  context.system.scheduler.schedule(0.second, 1.second, self, PeerManagerTick)
+  private val Tick = "PeerManagerTick"
+  context.system.scheduler.schedule(0.second, 1.second, self, Tick)
 
   decider {
     case e: peer.DownloadingFailed if peerOwners contains sender() =>
@@ -156,35 +185,35 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
     announce.map(retrieveNewPeers).map(NewAddresses(_)).recoverWith{case _ => newAddresses}
   }
 
-  var waiting = List.empty[(ActorRef, AskForPeer)]
+  var waiting = List.empty[(ActorRef, PeerRequest)]
   var peerOwners = Map.empty[ActorRef, ActorRef]
 
   def createPeer(address: Address) = {
     val addressEnscaped = address.toString.replaceAll("/", "")
     used = used + address
-    val props = peerFactory.props(Tracker.id, manifest.hash, Io.tcpConnectionProps(address))
+    val props = peerFactory.props(Tracker.id, manifest.hash, io.Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
   }
 
-  def respodWithAvailablePeer(asker: ActorRef, sender: ActorRef) {
+  def respodWithAvailablePeer(requester: ActorRef, sender: ActorRef) {
     require(!available.isEmpty)
     val peer = createPeer(available.head)
     sender ! peer
-    peerOwners += (peer -> asker)
+    peerOwners += (peer -> requester)
     available = available.tail
   }
 
   receiver {
-    case Torrent.AskForPeer(asker) if !available.isEmpty =>
-      respodWithAvailablePeer(asker, sender())
-    case m: Torrent.AskForPeer =>
+    case PeerRequest(requester) if !available.isEmpty =>
+      respodWithAvailablePeer(requester, sender())
+    case m: PeerRequest =>
       waiting = (sender(), m)  :: waiting
     case NewAddresses(addresses) =>
       available = addresses
-    case PeerManagerTick =>
+    case Tick =>
       waiting = waiting dropWhile {
-        case (sender, Torrent.AskForPeer(asker)) if !available.isEmpty =>
-          respodWithAvailablePeer(asker, sender)
+        case (sender, PeerRequest(requester)) if !available.isEmpty =>
+          respodWithAvailablePeer(requester, sender)
           true
         case _ => false
       }
@@ -196,6 +225,7 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   }
 }
 
+//Downloads the assigned piece
 class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
@@ -207,12 +237,12 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
     case f => Escalate
   }
 
-  val Tick = "tick"
+  val Tick = "PieceHandlerTick"
   context.system.scheduler.schedule(0.second, 10.seconds, self, Tick)
 
   val torrent = context.parent
 
-  def newPeer: Future[ActorRef] = (torrent ? new AskForPeer(self)).mapTo[ActorRef].recoverWith {
+  def newPeer: Future[ActorRef] = (torrent ? new PeerRequest(self)).mapTo[ActorRef].recoverWith {
    case f => log.debug("failed on peer creation {}", f); newPeer
   }
 
