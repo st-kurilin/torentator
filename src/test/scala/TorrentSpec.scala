@@ -132,6 +132,46 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       })}
     }
 
+    "download file using peers that download blocks in arbitary order" in {
+      shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
+        def receive = { case peer.DownloadPiece(index, offset, length) =>
+          val numberOfBlocks = 3
+          val downloadOrder = List(2, 0, 1)
+          require(downloadOrder.size == numberOfBlocks)
+          val blockMaxSize = Math.ceil(length.toDouble / numberOfBlocks).toInt
+          for (block <- downloadOrder) {
+            val blockOffset = offset + block * blockMaxSize
+            val blockSize = Math.min(blockMaxSize, length.toInt - blockOffset)
+            require(blockSize > 0)
+            sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
+          }
+          sender() ! peer.PieceDownloaded(index)
+        }
+      })}
+    }
+
+    "download file using peers that provides peers with overlapping blocks" in {
+      shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
+        def receive = { case peer.DownloadPiece(index, offset, length) =>
+          val numberOfMiniBlocks = 5 //Mini blocks can be composed into single blocks
+          val miniBlocksDownloadOrder = List(0 to 1, 3 to 4, 1 to 3)
+          val miniBlockMaxSize = Math.ceil(length.toDouble / numberOfMiniBlocks).toInt
+          for {
+            blockRange <- miniBlocksDownloadOrder
+            minBlock = blockRange.min
+            maxBlock = blockRange.max
+            numberOfMiniBlocks = blockRange.size
+          } {
+            val blockOffset = offset + minBlock * miniBlockMaxSize
+            val blockSize = Math.min(numberOfMiniBlocks * miniBlockMaxSize, length.toInt - blockOffset)
+            println(s"Sending: blockOffset: ${blockOffset}, blockSize: ${blockSize}")
+            sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
+          }
+          sender() ! peer.PieceDownloaded(index)
+        }
+      })}
+    }
+
     //for development only
     // "do it for real" in {
     //   val destination = java.nio.file.Files.createTempFile("torrentator", "temp")

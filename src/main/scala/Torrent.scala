@@ -229,6 +229,7 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
 class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor with akka.actor.ActorLogging {
   import Torrent._
   import Peer._
+  import scala.collection.mutable.PriorityQueue
 
   implicit val timeout = akka.util.Timeout(3.seconds)
   import context.dispatcher
@@ -254,8 +255,10 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
   def downloaded = pieceData.size
   var peer: ActorRef = null
   var done = false
+  var notHandledDownloadedBlocks = new PriorityQueue[BlockDownloaded]()(Ordering.by(-_.offset))
 
   var pieceData = Seq.empty[Byte]
+
 
   download(newPeer, downloaded)
 
@@ -268,11 +271,14 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
         case Tick => log.debug("Piece {} downloaded.", piece)
         case r => log.debug("Piece {} downloaded. received: {}", piece, r)
       }
-    case BlockDownloaded(pieceIndex, offset, content) =>
-      require(downloaded <= offset + content.length,
-          s"on piece ${piece} already downloaded ${this.downloaded} can not replace with ${offset}+")
-      require(downloaded == offset)
-      pieceData = pieceData ++ content.drop((downloaded - offset).toInt)
+    case m: BlockDownloaded =>
+      notHandledDownloadedBlocks enqueue m
+      notHandledDownloadedBlocks = notHandledDownloadedBlocks dropWhile {
+        case BlockDownloaded(pieceIndex, offset, content) if offset <= downloaded =>
+          pieceData = pieceData ++ content.drop((downloaded - offset).toInt)
+          true
+        case _ => false
+      }
     case DownloadingFailed(reason: String) =>
       if (!done) {
         log.debug("piece: {}. asked for replacement: reason: {} dwn: {};  peer {}",
