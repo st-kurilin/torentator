@@ -259,18 +259,9 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
 
   var pieceData = Seq.empty[Byte]
 
-
   download(newPeer, downloaded)
 
   def receive = {
-    case PieceDownloaded(index) =>
-      checkPieceHashes(piece, pieceData, hash)
-      torrent ! PieceCollected(index, pieceData)
-
-      context become {
-        case Tick => log.debug("Piece {} downloaded.", piece)
-        case r => log.debug("Piece {} downloaded. received: {}", piece, r)
-      }
     case m: BlockDownloaded =>
       notHandledDownloadedBlocks enqueue m
       notHandledDownloadedBlocks = notHandledDownloadedBlocks dropWhile {
@@ -278,6 +269,15 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
           pieceData = pieceData ++ content.drop((downloaded - offset).toInt)
           true
         case _ => false
+      }
+      if (downloaded == totalSize) {
+        checkPieceHashes(piece, pieceData, hash)
+        torrent ! PieceCollected(piece, pieceData)
+
+        context become {
+          case Tick => log.debug("Piece {} downloaded.", piece)
+          case r => log.debug("Piece {} downloaded. received: {}", piece, r)
+        }
       }
     case DownloadingFailed(reason: String) =>
       if (!done) {

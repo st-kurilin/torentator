@@ -37,7 +37,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
           val data = readContent(index, offset, length.toInt)
           sender() ! peer.BlockDownloaded(index, offset, data)
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -47,7 +46,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
           if (index == 0) sender() ! peer.BlockDownloaded(index, offset, Seq.fill(content(index).size)(13.toByte))
           else sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt))
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -66,7 +64,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
           } {
             sender() ! peer.BlockDownloaded(index, currentOffset, readContent(index, currentOffset, currentBlockSize))
           }
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -80,7 +77,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
             sender() ! peer.DownloadingFailed(s"test failing on [${index}] ${offset} ~ ${readContent(index, offset, blockSize)}")
           } else {
             sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt - offset))
-            sender() ! peer.PieceDownloaded(index)
           }
         }
       })}
@@ -108,7 +104,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
             val currentOffset = offset + block * blockSize
             sender() ! peer.BlockDownloaded(index, currentOffset, readContent(index, currentOffset, currentBlockSize))  
           }
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -124,10 +119,12 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
             sender() ! peer.BlockDownloaded(index, offset, data)
             piecesProvided += index
           } else {
-            sender() ! peer.BlockDownloaded(index, offset, Seq.fill(length.toInt)(13))
+            val m1 = length.toInt / 2
+            val m2 = length.toInt - m1
+            sender() ! peer.BlockDownloaded(index, offset, Seq.fill(m1)(13))
+            sender() ! peer.BlockDownloaded(index, m1, Seq.fill(m2)(13))
             mistaked = true
           }
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -145,7 +142,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
             require(blockSize > 0)
             sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
           }
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -167,7 +163,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
             println(s"Sending: blockOffset: ${blockOffset}, blockSize: ${blockSize}")
             sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
           }
-          sender() ! peer.PieceDownloaded(index)
         }
       })}
     }
@@ -242,7 +237,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     torrent.tell(StatusRequest, client.ref)
     client.expectMsg(Downloaded)
 
-    assert(!failureListener.msgAvailable)
+    if (failureListener.msgAvailable) fail(s"Failure message received: ${failureListener.receiveOne(0.seconds)}")
 
     val expectedContent = content.flatten
 
