@@ -1,5 +1,11 @@
 package torentator.io
 
+import akka.actor.Props
+import java.nio.file.Path
+import java.net.InetSocketAddress
+
+/** Module with mackable actors abstraction around IO concepts.*/
+
 case object Connected
 case class ConnectionFailed(msg: String) extends RuntimeException
 
@@ -11,17 +17,10 @@ case class Received(data: Seq[Byte])
 case object Close
 
 trait FileConnectionCreator {
-  import akka.actor.Props
-  import java.nio.file.Path
-
   def fileConnectionProps(path: Path, expectedSize: Int = 16 * 1024): Props
 }
 
 object Io extends FileConnectionCreator {
-  import akka.actor.Props
-  import java.net.InetSocketAddress
-  import java.nio.file.Path
-
   def tcpConnectionProps(remote: InetSocketAddress): Props =
     Props(classOf[NetworkConnection], remote)
 
@@ -29,6 +28,8 @@ object Io extends FileConnectionCreator {
     Props(classOf[FileConnection], path, expectedSize)
 }
 
+
+/*Impl*/
 
 import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, PoisonPill }
 import akka.util.ByteString
