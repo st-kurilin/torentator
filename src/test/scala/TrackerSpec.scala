@@ -4,7 +4,6 @@ import org.scalatest._
 import scala.concurrent.ExecutionContext.Implicits.global
 
 class TrackerSpec extends FlatSpec with Matchers {
-  import Bencoding._
   import tracker.Tracker._
   import util.{Try, Success, Failure}
 

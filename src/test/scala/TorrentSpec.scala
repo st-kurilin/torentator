@@ -21,7 +21,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       name = "test manifest",
       announce = new java.net.URI("fake://fake"),
       hash = Seq.fill(hashSize)(1.toByte),
-      pieces = Seq.tabulate(numberOfPieces)(piece => Bencoding.hash(content(piece))),
+      pieces = Seq.tabulate(numberOfPieces)(piece => encoding.Encoder.hash(content(piece))),
       pieceLength = pieceLength,
       length = totalLength)
     (m, content)

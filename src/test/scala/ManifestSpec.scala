@@ -3,7 +3,8 @@ package torentator
 import org.scalatest._
 
 class ManifestSpec extends FlatSpec with Matchers {
-  import Bencoding._
+  import bencoding._
+  import encoding.Encoder
   import util.{Success, Failure}
 
   "Manifest" should "be creatable from single file becoding description" in {
@@ -61,7 +62,7 @@ class ManifestSpec extends FlatSpec with Matchers {
         pieceLength should not be (0)
         length should not be (0)
         pieces should not be empty
-        assert(hash === Bencoding.parseByteArray("1619ecc9373c3639f4ee3e261638f29b33a6cbd6"))
+        assert(hash === Encoder.parseByteArray("1619ecc9373c3639f4ee3e261638f29b33a6cbd6"))
       case Success(m) => fail(m.toString)
       case Failure(e) => fail(e)
     }

@@ -31,7 +31,7 @@ object Torrent {
         Actual  : ${actual.mkString(", ")}""")
 
   def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
-    val actual = Bencoding.hash(data).toSeq
+    val actual = encoding.Encoder.hash(data).toSeq
     val expected = expectedHash.toSeq
     if (actual.toSeq != expected.toSeq) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
   }

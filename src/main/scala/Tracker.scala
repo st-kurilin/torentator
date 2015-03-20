@@ -7,7 +7,8 @@ case class AnnounceReceived(announce: Tracker.Announce)
 
 object Tracker {
   import util.{Try, Success, Failure}
-  import Bencoding._
+  import bencoding._
+  import encoding.Encoder._
   import java.net.InetSocketAddress
   import scala.concurrent.Future
   import scala.concurrent.Future
@@ -28,7 +29,7 @@ object Tracker {
   val id = "ABCDEFGHIJKLMNOPQRST"
 
   def announce(manifest: Manifest)(implicit ec: scala.concurrent.ExecutionContext): Future[Announce] = Future {
-    val hash = Bencoding.urlEncode(manifest.hash)
+    val hash = urlEncode(manifest.hash)
     val rest = "port=6881&uploaded=0&downloaded=0&left=727955456&event=started&numwant=100&no_peer_id=1&compact=1"
 
     // sample http://torrent.ubuntu.com:6969/announce
@@ -45,7 +46,7 @@ object Tracker {
   }
 
   def parseAnnounce(content: String) = {
-    Bencoding.parse(content) flatMap {
+    Bencode.parse(content) flatMap {
       case BDictionary(m) => (m.get("interval"), m.get("peers")) match {
           case (Some(BInteger(interval)), Some(BinaryString(peersInShortForm))) =>
             val peers = peersInShortForm.grouped(6).map(a => parseHostAndPort(a)).toSet

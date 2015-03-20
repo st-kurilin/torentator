@@ -1,13 +1,14 @@
 package torentator
 
 object Manifest {
-  import Bencoding._
+  import bencoding._
+  import encoding._
   import util.Success
   import util.Failure
   import util.Try
   def apply(location: java.io.File): util.Try[Manifest] = {
     val content = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(location.getPath))
-    parse(new String(content, "ISO-8859-1")) flatMap { encoded =>
+    Bencode.parse(new String(content, "ISO-8859-1")) flatMap { encoded =>
       Manifest(encoded, infoHash(content))
     }
   }
@@ -94,6 +95,27 @@ object Manifest {
         }
       case e => f(s"Manifest expected to be dictionary, but [${e}] found.")
     }
+  }
+
+  def infoHash(str: Seq[Byte]): Seq[Byte] = {
+    def subindex(big: Seq[Byte], bi: Int, small: Seq[Byte], si: Int): Option[Int] = {
+      require(bi >= 0 && si >= 0)
+      val (sl, bl) = (small.size, big.size)
+      (bi, si) match {
+        case (_, `sl`) => Some(bi - si)
+        case (`bl`, _) => None
+        case _ if big(bi) == small(si) => subindex(big, bi + 1, small, si + 1)
+        case _ => subindex(big, bi - si + 1, small, 0)
+      }
+    }
+    val infoArray = "info".getBytes.toList
+    val ss = subindex(str, 0, infoArray, 0)
+    val startIndex = ss.get + infoArray.size
+    val endIndex = str.length - 1
+
+    val infoValue = str.slice(startIndex, endIndex)
+    val seq = str.slice(startIndex, endIndex)
+    Encoder.hash(seq)
   }
 }
 
