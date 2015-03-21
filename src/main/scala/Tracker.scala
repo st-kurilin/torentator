@@ -1,21 +1,30 @@
 package torentator.tracker
 
-import torentator._ 
-import torentator.manifest.Manifest 
+import java.net.InetSocketAddress
+import torentator.manifest.Manifest
+import akka.actor.Props
+
+/** Tracker actor. Tracker might be used to get announce that contains peers information. */
 
 case class RequestAnnounce(manifest: Manifest)
-case class AnnounceReceived(announce: Tracker.Announce)
+case class AnnounceReceived(announce: Announce)
+
+case class Announce(interval: Long, peers: Set[InetSocketAddress])
 
 object Tracker {
-  import util.{Try, Success, Failure}
-  import bencoding._
-  import encoding.Encoder._
-  import java.net.InetSocketAddress
-  import scala.concurrent.Future
-  import scala.concurrent.Future
+  val props = Props(classOf[Tracker])
+  val id = "ABCDEFGHIJKLMNOPQRST"
+}
 
-  val props = akka.actor.Props(classOf[Tracker])
 
+//Impl
+
+import util.{Try, Success, Failure}
+import torentator.bencoding._
+import torentator.encoding.Encoder._
+import scala.concurrent.Future
+
+object TrackerImpl {
   def get(url: String, attempt: Int = 0): String = {
     try {
       scala.io.Source.fromURL(url, "ISO-8859-1").mkString
@@ -27,8 +36,6 @@ object Tracker {
     }
   }
 
-  val id = "ABCDEFGHIJKLMNOPQRST"
-
   def announce(manifest: Manifest)(implicit ec: scala.concurrent.ExecutionContext): Future[Announce] = Future {
     val hash = urlEncode(manifest.infoHash)
     val rest = "port=6881&uploaded=0&downloaded=0&left=727955456&event=started&numwant=100&no_peer_id=1&compact=1"
@@ -37,7 +44,7 @@ object Tracker {
     //?info_hash=%16%19%EC%C97%3C69%F4%EE%3E%26%168%F2%9B3%A6%CB%D6
     //&peer_id=ABCDEFGHIJKLMNOPQRST&port=6881&uploaded=0&downloaded=0&left=727955456
     //&event=started&numwant=100&no_peer_id=1&compact=1
-    val url = s"${manifest.announce}?info_hash=${hash}&peer_id=${id}&${rest}"
+    val url = s"${manifest.announce}?info_hash=${hash}&peer_id=${Tracker.id}&${rest}"
     val content = get(url)
 
     parseAnnounce(content) match {
@@ -68,14 +75,12 @@ object Tracker {
     val port = parseInt(shortForm(4), shortForm(5))
     new InetSocketAddress(ip, port)
   }
-
-  case class Announce(interval: Long, peers: Set[InetSocketAddress])
 }
 
 import akka.actor.Actor
 
 class Tracker extends Actor {
-  import Tracker._
+  import TrackerImpl._
   import context.dispatcher
 
   def receive: Receive = {

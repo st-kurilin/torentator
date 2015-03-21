@@ -188,7 +188,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
          case tracker.RequestAnnounce(manifest) =>
           def randInt = scala.util.Random.nextInt(250) + 1
           val randPeers = List.fill(10)(new java.net.InetSocketAddress(s"${randInt}.${randInt}.${randInt}.${randInt}", 10)).toSet
-          sender() ! tracker.AnnounceReceived(tracker.Tracker.Announce(0, randPeers))
+          sender() ! tracker.AnnounceReceived(tracker.Announce(0, randPeers))
       }
     })
     val fileMock = new io.FileConnectionCreator {
