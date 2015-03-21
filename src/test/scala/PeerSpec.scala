@@ -4,14 +4,13 @@ package torentator.peer
 
 import org.scalatest._
 import scala.concurrent.duration._
+import akka.util.ByteString
 
  
 class PeerPoorSpec extends FlatSpec with Matchers {
-  import akka.util.ByteString
-
   "Peer" should "create proper handshake" in {
-    val manifest = torentator.Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent")).get
-    var msg = Peer.handshakeMessage("ABCDEFGHIJKLMNOPQRST", manifest.hash)
+    val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
+    var msg = Peer.handshakeMessage("ABCDEFGHIJKLMNOPQRST", manifest.infoHash)
 
     assert (msg.length === 68)
   }

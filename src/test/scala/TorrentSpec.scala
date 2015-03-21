@@ -10,6 +10,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
   import akka.testkit.TestProbe
   import scala.util.Random
   import scala.collection.mutable.ArrayBuffer
+  import torentator.manifest.{Manifest, SingleFileManifest}
 
   val (manifest: Manifest, content: Seq[Seq[Byte]]) = {
     val pieceLength = Math.pow(2, 6).toInt
@@ -20,7 +21,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     val m = SingleFileManifest(
       name = "test manifest",
       announce = new java.net.URI("fake://fake"),
-      hash = Seq.fill(hashSize)(1.toByte),
+      infoHash = Seq.fill(hashSize)(1.toByte),
       pieces = Seq.tabulate(numberOfPieces)(piece => encoding.Encoder.hash(content(piece))),
       pieceLength = pieceLength,
       length = totalLength)

@@ -1,23 +1,36 @@
-package torentator
+package torentator.manifest
+
+/**Contains abstraction around Torrent Manifest and parser form bencode.*/
+
+sealed trait Manifest {
+  def name: String
+  def announce: java.net.URI
+  def pieceLength: Long
+  def infoHash: Seq[Byte]
+}
+
+case class SingleFileManifest(name: String, announce: java.net.URI,
+  infoHash: Seq[Byte], pieces: Seq[Seq[Byte]], pieceLength: Long, length: Long) extends Manifest
+case class MultiFileManifest (name: String, announce: java.net.URI,
+  infoHash: Seq[Byte], pieceLength: Long, files: Seq[(Long, String)]) extends Manifest
 
 object Manifest {
-  import bencoding._
-  import encoding._
-  import util.Success
-  import util.Failure
-  import util.Try
-  def apply(location: java.io.File): util.Try[Manifest] = {
-    val content = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(location.getPath))
-    Bencode.parse(new String(content, "ISO-8859-1")) flatMap { encoded =>
-      Manifest(encoded, infoHash(content))
+  import torentator.bencoding._
+  import torentator.encoding.Encoder._
+  import util.{Try, Success, Failure}
+  import java.nio.file.{Path, Paths}
+
+  def parse(encoded: Bencode, hash: Seq[Byte]): Try[Manifest] = parseImpl(encoded, hash)
+
+  def read(location: Path): Try[Manifest] = {
+    val content = java.nio.file.Files.readAllBytes(location)
+    Bencode.parse(bytesToStr(content)) flatMap { encoded =>
+      Manifest.parse(encoded, infoHash(content))
     }
   }
 
-  private def f(msg: String) = {
-    Failure(new RuntimeException(msg))
-  }
-
-  def flatten[T](xs: Seq[Try[T]]): Try[Seq[T]] = {
+  //Impl
+  private def flatten[T](xs: Seq[Try[T]]): Try[Seq[T]] = {
     val (ss: Seq[Success[T]]@unchecked, fs: Seq[Failure[T]]@unchecked) =
     xs.partition(_.isSuccess)
 
@@ -28,7 +41,8 @@ object Manifest {
     }
   }
 
-  def apply(encoded: Bencode, hash: Seq[Byte]): util.Try[Manifest] = {
+  private def parseImpl(encoded: Bencode, hash: Seq[Byte]): Try[Manifest] = {
+    def f(msg: String) = Failure(new RuntimeException(msg))
     def decodeAnnounce(encoded: Bencode) = encoded match {
       case BString(s) => Success(s)
       case e => f(s"Manifest 'info' expected to be string, but [${e}] found.")
@@ -97,7 +111,7 @@ object Manifest {
     }
   }
 
-  def infoHash(str: Seq[Byte]): Seq[Byte] = {
+  private def infoHash(str: Seq[Byte]): Seq[Byte] = {
     def subindex(big: Seq[Byte], bi: Int, small: Seq[Byte], si: Int): Option[Int] = {
       require(bi >= 0 && si >= 0)
       val (sl, bl) = (small.size, big.size)
@@ -115,18 +129,9 @@ object Manifest {
 
     val infoValue = str.slice(startIndex, endIndex)
     val seq = str.slice(startIndex, endIndex)
-    Encoder.hash(seq)
+    hash(seq)
   }
 }
 
-sealed trait Manifest {
-  def name: String
-  def announce: java.net.URI
-  def pieceLength: Long
-  def hash: Seq[Byte]
-}
-case class SingleFileManifest(name: String, announce: java.net.URI,
-  hash: Seq[Byte], pieces: Seq[Seq[Byte]], pieceLength: Long, length: Long) extends Manifest
-case class MultiFileManifest (name: String, announce: java.net.URI,
-  hash: Seq[Byte], pieceLength: Long, files: Seq[(Long, String)]) extends Manifest
+
 

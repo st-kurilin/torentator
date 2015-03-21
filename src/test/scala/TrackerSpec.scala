@@ -47,9 +47,8 @@ class TrackerSpec extends FlatSpec with Matchers {
   }
 
   it should "get announce from tracker" in {
-    val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent"))
-
-    manifest.flatMap{case m => futureToTry(announce(m))} match {
+    val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
+    futureToTry(announce(manifest)) match {
         case Success(announce) =>
             assert (announce.interval !== 0)
             announce.peers should not be  empty

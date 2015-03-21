@@ -1,6 +1,7 @@
 package torentator.tracker
 
 import torentator._ 
+import torentator.manifest.Manifest 
 
 case class RequestAnnounce(manifest: Manifest)
 case class AnnounceReceived(announce: Tracker.Announce)
@@ -29,7 +30,7 @@ object Tracker {
   val id = "ABCDEFGHIJKLMNOPQRST"
 
   def announce(manifest: Manifest)(implicit ec: scala.concurrent.ExecutionContext): Future[Announce] = Future {
-    val hash = urlEncode(manifest.hash)
+    val hash = urlEncode(manifest.infoHash)
     val rest = "port=6881&uploaded=0&downloaded=0&left=727955456&event=started&numwant=100&no_peer_id=1&compact=1"
 
     // sample http://torrent.ubuntu.com:6969/announce

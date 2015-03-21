@@ -8,6 +8,8 @@ import scala.concurrent.{Future, Promise}
 import java.nio.file.Path
 
 import peer._
+import manifest.Manifest
+import manifest._
 
 //API messages
 //Get torrent download status
@@ -191,7 +193,7 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   def createPeer(address: Address) = {
     val addressEnscaped = address.toString.replaceAll("/", "")
     used = used + address
-    val props = peerFactory.props(Tracker.id, manifest.hash, io.Io.tcpConnectionProps(address))
+    val props = peerFactory.props(Tracker.id, manifest.infoHash, io.Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
   }
 

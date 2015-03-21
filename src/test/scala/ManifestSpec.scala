@@ -1,11 +1,12 @@
-package torentator
+package torentator.manifest
 
 import org.scalatest._
 
 class ManifestSpec extends FlatSpec with Matchers {
-  import bencoding._
-  import encoding.Encoder
+  import torentator.bencoding._
+  import torentator.encoding.Encoder
   import util.{Success, Failure}
+  import java.nio.file.Paths
 
   "Manifest" should "be creatable from single file becoding description" in {
   val name = "tpb"
@@ -15,7 +16,7 @@ class ManifestSpec extends FlatSpec with Matchers {
   val hash = List()
   val pieces = Seq.tabulate(4)(_ => Seq.tabulate(20)(n => n.toByte))
 
-  val actual = Manifest(BDictionary(Map(
+  val actual = Manifest.parse(BDictionary(Map(
     "announce" -> BString(announce),
     "info" -> BDictionary(Map(
     "name"    -> BString(name),
@@ -40,7 +41,7 @@ class ManifestSpec extends FlatSpec with Matchers {
       BDictionary(Map("length" -> BInteger(l), "path" -> path))
     })
 
-    val actual = Manifest(BDictionary(Map(
+    val actual = Manifest.parse(BDictionary(Map(
       "announce" -> BString(announce),
       "info" -> BDictionary(Map(
       "name"    -> BString(name),
@@ -52,7 +53,7 @@ class ManifestSpec extends FlatSpec with Matchers {
   }
 
   it should "be creatable from real file (SingleFileManifest)" in {
-    val manifest = Manifest(new java.io.File("./src/test/resources/sample.single.http.torrent"))
+    val manifest = Manifest.read(Paths.get("./src/test/resources/sample.single.http.torrent"))
 
     manifest match {
       case Success(SingleFileManifest(name, announce, hash, pieces, pieceLength, length)) => 
@@ -69,7 +70,7 @@ class ManifestSpec extends FlatSpec with Matchers {
   }
 
   it should "be creatable from real file (MultiFileManifest)" in {
-    val manifest = Manifest(new java.io.File("./src/test/resources/sample.multi.udp.torrent"))
+    val manifest = Manifest.read(Paths.get("./src/test/resources/sample.multi.udp.torrent"))
 
     manifest match {
       case Success(MultiFileManifest(name, announce, hash, pieceLength, files)) => 
