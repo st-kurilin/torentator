@@ -1,15 +1,11 @@
-package torentator
+package torentator.torrent
 
-import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, OneForOneStrategy, PoisonPill }
-import akka.actor.SupervisorStrategy._
-import akka.pattern.ask
-import scala.concurrent.duration._
-import scala.concurrent.{Future, Promise}
 import java.nio.file.Path
+import torentator.manifest.Manifest
+import torentator.io.FileConnectionCreator
+import torentator.peer.PeerPropsCreator
+import akka.actor.Props
 
-import peer._
-import manifest.Manifest
-import manifest._
 
 //API messages
 //Get torrent download status
@@ -21,31 +17,39 @@ case object Downloading
 //Downloading completed
 case object Downloaded
 
+
+object Torrent {
+  def props(manifest: Manifest, destination: Path,
+    fileCC: FileConnectionCreator, peerFactory: PeerPropsCreator, trackerProps: Props): Props =
+    Props(classOf[Torrent], manifest, destination, fileCC, peerFactory, trackerProps)
+
+  import torentator.io.Io
+  import torentator.peer.Peer
+  import torentator.tracker.Tracker
+  def props(manifest: Manifest, destination: Path): Props = props(manifest, destination, Io, Peer, Tracker.props)
+}
+
+
+//Impl
+import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, OneForOneStrategy, PoisonPill }
+import akka.actor.SupervisorStrategy._
+import akka.pattern.ask
+import scala.concurrent.duration._
+import scala.concurrent.{Future, Promise}
+import torentator.peer._
+import torentator.io._
+import torentator.manifest.SingleFileManifest
+import torentator.encoding.Encoder
+
 //Internal messages
 case class PeerRequest(requester: ActorRef)
 case class PieceCollected(pieceIndex: Int, data: Seq[Byte])
 case class PieceSaved(pieceIndex: Int)
 
-object Torrent {
-  case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
-        PieceHashCheckFailed for piece ${piece}.
-        Expected: ${expected.mkString(", ")}.
-        Actual  : ${actual.mkString(", ")}""")
-
-  def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
-    val actual = encoding.Encoder.hash(data).toSeq
-    val expected = expectedHash.toSeq
-    if (actual.toSeq != expected.toSeq) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
-  }
-
-  def pieceHandlerProps(pieceIndex: Int, manifest: SingleFileManifest) = {
-    val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
-    val pieceActualLength = if (pieceIndex == numberOfPieces - 1)
-        manifest.length % manifest.pieceLength
-      else manifest.pieceLength
-    Props(classOf[PieceHandler], pieceIndex, pieceActualLength, manifest.pieces(pieceIndex))
-  }
-}
+case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
+  PieceHashCheckFailed for piece ${piece}.
+  Expected: ${expected.mkString(", ")}.
+  Actual  : ${actual.mkString(", ")}""")
 
 //Util class. Used to organise torrent actor in composable way
 trait ComposableActor extends Actor {
@@ -75,16 +79,13 @@ trait ComposableActor extends Actor {
 class Torrent (
   _manifest: Manifest,
   destination: Path,
-  fileCC: io.FileConnectionCreator,
-  val peerFactory: peer.PeerPropsCreator,
+  fileCC: FileConnectionCreator,
+  val peerFactory: PeerPropsCreator,
   val trackerProps: Props)
-  extends ComposableActor with PeerManager  with StatusTracker with FileFlusher
+  extends ComposableActor with PieceHandlerCreator with PeerManager  with StatusTracker with FileFlusher
   with akka.actor.ActorLogging {
 
   import Torrent._
-
-  def this(_manifest: Manifest, destination: Path) =
-    this(_manifest, destination, io.Io, peer.Peer, tracker.Tracker.props)
 
   decider {
     case e: PieceHashCheckFailed =>
@@ -132,6 +133,16 @@ trait StatusTracker extends ComposableActor with akka.actor.ActorLogging {
   }
 }
 
+trait PieceHandlerCreator extends ComposableActor {
+  def pieceHandlerProps(pieceIndex: Int, manifest: SingleFileManifest) = {
+    val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
+    val pieceActualLength = if (pieceIndex == numberOfPieces - 1)
+        manifest.length % manifest.pieceLength
+      else manifest.pieceLength
+    Props(classOf[PieceHandler], pieceIndex, pieceActualLength, manifest.pieces(pieceIndex))
+  }
+}
+
 //Writes downloaded data to file system piece by piece.
 trait FileFlusher extends ComposableActor with akka.actor.ActorLogging {
   def manifest: Manifest
@@ -139,8 +150,8 @@ trait FileFlusher extends ComposableActor with akka.actor.ActorLogging {
 
   receiver {
     case PieceCollected(index, data) =>
-      destinationFile ! io.Send(data, index * manifest.pieceLength.toInt, index)
-    case io.Sended(index) => 
+      destinationFile ! Send(data, index * manifest.pieceLength.toInt, index)
+    case Sended(index) => 
       self ! PieceSaved(index)
   }
 }
@@ -166,14 +177,14 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   context.system.scheduler.schedule(0.second, 1.second, self, Tick)
 
   decider {
-    case e: peer.DownloadingFailed if peerOwners contains sender() =>
+    case e: DownloadingFailed if peerOwners contains sender() =>
       peerOwners(sender()) forward e
       Stop
-    case e: peer.DownloadingFailed =>
+    case e: DownloadingFailed =>
       Stop
     case e if peerOwners contains sender() =>
       log.warning("Unexpected exception occur for peer: {}", e)
-      peerOwners(sender()).tell(peer.DownloadingFailed(e.getMessage), sender)
+      peerOwners(sender()).tell(DownloadingFailed(e.getMessage), sender)
       Stop
   }
 
@@ -193,7 +204,7 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
   def createPeer(address: Address) = {
     val addressEnscaped = address.toString.replaceAll("/", "")
     used = used + address
-    val props = peerFactory.props(Tracker.id, manifest.infoHash, io.Io.tcpConnectionProps(address))
+    val props = peerFactory.props(Tracker.id, manifest.infoHash, Io.tcpConnectionProps(address))
     context.actorOf(props, s"peer:${addressEnscaped}")
   }
 
@@ -262,6 +273,12 @@ class PieceHandler(piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor w
   var pieceData = Seq.empty[Byte]
 
   download(newPeer, downloaded)
+
+  def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
+    val actual = Encoder.hash(data).toSeq
+    val expected = expectedHash.toSeq
+    if (actual.toSeq != expected.toSeq) throw new PieceHashCheckFailed(pieceIndex, actual, expected)
+  }
 
   def receive = {
     case m: BlockDownloaded =>

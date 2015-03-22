@@ -1,12 +1,12 @@
-package torentator
+package torentator.torrent
 
 
 import org.scalatest._
 import scala.concurrent.duration._
 import akka.actor.{Actor, ActorRef, Props}
+import torentator._
 
 class TorrentSpec extends ActorSpec("TorrentSpec") {
-  import Torrent._
   import akka.testkit.TestProbe
   import scala.util.Random
   import scala.collection.mutable.ArrayBuffer
@@ -167,13 +167,6 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
         }
       })}
     }
-
-    //for development only
-    // "do it for real" in {
-    //   val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
-    //   val torrent = system.actorOf(Props(classOf[Torrent], manifest, destination), "torrent") 
-    //   expectNoMsg(70000.seconds)
-    // }
   }
 
   case class TestContext(client: TestProbe, torrent: ActorRef, failureListener: TestProbe, targetFileListener: TestProbe)
@@ -216,7 +209,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
     val name = "torrent" + scala.util.Random.nextInt
-    val torrent = system.actorOf(Props(classOf[Torrent], manifest, destination, fileMock, peerCreator, trackerMock), name) 
+    val torrent = system.actorOf(Torrent.props(manifest, destination, fileMock, peerCreator, trackerMock), name) 
 
     val client = TestProbe()
     TestContext(client, torrent, failureListener, targetFileListener)
@@ -263,3 +256,17 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     assert(!failureListener.msgAvailable)
   }
 }
+
+
+// class TorrentIntegSpec extends ActorSpec("TorrentIntegSpec") {
+//   import akka.testkit.TestProbe
+//   import scala.util.Random
+//   import scala.collection.mutable.ArrayBuffer
+//   import torentator.manifest.{Manifest, SingleFileManifest}
+//   val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
+//   "do it for real" in {
+//     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
+//     val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent") 
+//     expectNoMsg(70000.seconds)
+//   }
+// }
