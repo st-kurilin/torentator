@@ -41,6 +41,7 @@ import torentator.peer._
 import torentator.io._
 import torentator.manifest.SingleFileManifest
 import torentator.encoding.Encoder
+import java.net.{ InetSocketAddress => Address}
 
 //Internal messages
 case class PeerRequest(requester: ActorRef)
@@ -83,7 +84,9 @@ class Torrent (
   fileCC: FileConnectionCreator,
   val peerFactory: PeerPropsCreator,
   val trackerProps: Props)
-  extends ComposableActor with PieceHandlerCreator with PeerManager  with StatusTracker with FileFlusher
+  extends ComposableActor with PieceHandlerCreator with StatusTracker with FileFlusher
+  with PeerManager with PeerAdressesProvider with PeerCreator
+
   with akka.actor.ActorLogging {
 
   import Torrent._
@@ -99,7 +102,7 @@ class Torrent (
     case _ => throw new RuntimeException("Only single file torrents supported")
   }
 
-  val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
+  val numberOfPieces = 5//java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
   val destinationFile = context.actorOf(fileCC.fileConnectionProps(destination))
 
   log.info("""Downloading torrent to {}
@@ -157,22 +160,73 @@ trait FileFlusher extends ComposableActor with akka.actor.ActorLogging {
   }
 }
 
-//Creates and replaces peers
-trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
-  import Torrent._
-  import Peer._
-  import torentator.tracker._
+//Provides new adresses where peers might be located
+trait PeerAdressesProvider extends ComposableActor with akka.actor.ActorLogging {
   import context.dispatcher
+  import torentator.tracker._
+
+  case class NewAddresses(addresses: List[Address])
+
+  def manifest: Manifest
+  def trackerProps: Props
+  
+  lazy val tracker = context.actorOf(trackerProps)
+
+  val Tick = "PeerAdressesProviderTick"
+  context.system.scheduler.schedule(0.second, 3.second, self, Tick)
 
   implicit val timeout = akka.util.Timeout(3.seconds)
 
-  type Address = java.net.InetSocketAddress
+  var used = Set.empty[Address]
+  var available = List.empty[Address]
 
+  def newAddresses: Future[NewAddresses] = {
+    def announce = (tracker ? RequestAnnounce(manifest)).mapTo[AnnounceReceived]
+    def retrieveNewPeers = (response: AnnounceReceived) => response.announce.peers.filter(!used.contains(_)).toList
+    announce.map(retrieveNewPeers).map(NewAddresses(_)).recoverWith{case _ => newAddresses}
+  }
+
+  def newPeerAddress: Option[Address] = available match {
+    case h::tail =>
+      available = tail
+      used = used + h
+      Some(h)
+    case _ => None
+  }
+
+  receiver {
+    case Tick if (available.size < 2) => 
+      newAddresses onSuccess { case a =>
+        self ! a
+      }
+    case NewAddresses(addresses) =>
+      available = addresses
+  }
+}
+
+//Instanciates peer actor for given address
+trait PeerCreator extends Actor {
+  import torentator.tracker._
   def manifest: Manifest
-  def peerFactory: PeerPropsCreator
-  def trackerProps: Props
 
-  case class NewAddresses(addresses: List[Address])
+  def peerFactory: PeerPropsCreator
+
+  def createPeer(address: Address): ActorRef = {
+    val addressEnscaped = address.toString.replaceAll("/", "")
+    val props = peerFactory.props(Tracker.id, manifest.infoHash, Io.tcpConnectionProps(address))
+    context.actorOf(props, s"peer:${addressEnscaped}")
+  }
+}
+
+//Manages peer lifecicle
+trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
+  import context.dispatcher
+  
+  import Torrent._
+  import Peer._
+
+  def newPeerAddress: Option[Address]
+  def createPeer(address: Address): ActorRef
 
   private val Tick = "PeerManagerTick"
   context.system.scheduler.schedule(0.second, 1.second, self, Tick)
@@ -189,52 +243,28 @@ trait PeerManager extends ComposableActor with akka.actor.ActorLogging {
       Stop
   }
 
-  var used = Set.empty[Address]
-  var available = List.empty[Address]
-
-  lazy val tracker = context.actorOf(trackerProps)
-  def newAddresses: Future[NewAddresses] = {
-    def announce = (tracker ? RequestAnnounce(manifest)).mapTo[AnnounceReceived]
-    def retrieveNewPeers = (response: AnnounceReceived) => response.announce.peers.filter(!used.contains(_)).toList
-    announce.map(retrieveNewPeers).map(NewAddresses(_)).recoverWith{case _ => newAddresses}
-  }
-
   var waiting = List.empty[(ActorRef, PeerRequest)]
   var peerOwners = Map.empty[ActorRef, ActorRef]
 
-  def createPeer(address: Address) = {
-    val addressEnscaped = address.toString.replaceAll("/", "")
-    used = used + address
-    val props = peerFactory.props(Tracker.id, manifest.infoHash, Io.tcpConnectionProps(address))
-    context.actorOf(props, s"peer:${addressEnscaped}")
-  }
-
-  def respodWithAvailablePeer(requester: ActorRef, sender: ActorRef) {
-    require(!available.isEmpty)
-    val peer = createPeer(available.head)
-    sender ! peer
-    peerOwners += (peer -> requester)
-    available = available.tail
+  def respodWithPeerIfAddressAvailable(requester: ActorRef, sender: ActorRef) = newPeerAddress match {
+    case Some(address) =>
+      val peer = createPeer(address)
+      sender ! peer
+      peerOwners += (peer -> requester)
+      true
+    case _ => false
   }
 
   receiver {
-    case PeerRequest(requester) if !available.isEmpty =>
-      respodWithAvailablePeer(requester, sender())
-    case m: PeerRequest =>
-      waiting = (sender(), m)  :: waiting
-    case NewAddresses(addresses) =>
-      available = addresses
+    case m @ PeerRequest(requester) =>
+      if (respodWithPeerIfAddressAvailable(requester, sender())) {
+        waiting = (sender(), m)  :: waiting  
+      }
     case Tick =>
       waiting = waiting dropWhile {
-        case (sender, PeerRequest(requester)) if !available.isEmpty =>
-          respodWithAvailablePeer(requester, sender)
-          true
+        case (sender, PeerRequest(requester)) =>
+          respodWithPeerIfAddressAvailable(requester, sender)
         case _ => false
-      }
-      if (available.size < 2) {
-        newAddresses onSuccess { case a =>
-          self ! a
-        }
       }
   }
 }

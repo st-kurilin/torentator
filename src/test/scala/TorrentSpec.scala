@@ -282,10 +282,27 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 //   import scala.util.Random
 //   import scala.collection.mutable.ArrayBuffer
 //   import torentator.manifest.{Manifest, SingleFileManifest}
+//   import akka.pattern.ask
+//   import scala.concurrent._
+//   import scala.concurrent.ExecutionContext.Implicits.global
+
 //   val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
+
 //   "do it for real" in {
+//     implicit val timeout = akka.util.Timeout(3.second)
 //     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
-//     val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent") 
-//     expectNoMsg(70000.seconds)
+//     val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent")
+
+//     awaitCond({
+//       val future = (torrent ? StatusRequest) map {
+//         case Downloading(downloadedPieces) =>
+//           println ("Pieces downloaded: " + downloadedPieces)
+//           false
+//         case Downloaded =>
+//           println("!!!Downloaded!!!")
+//           true
+//       }
+//       Await.result(future, 3.second)
+//     }, 70000.seconds, 5.seconds)
 //   }
 // }

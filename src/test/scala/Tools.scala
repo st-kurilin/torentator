@@ -9,7 +9,7 @@ import akka.testkit.{ TestActors, TestKit, ImplicitSender }
 abstract class ActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
 
-  def this(name: String) = this(ActorSystem(name, com.typesafe.config.ConfigFactory.parseString("""akka.loglevel = DEBUG""")))
+  def this(name: String) = this(ActorSystem(name, com.typesafe.config.ConfigFactory.parseString("""akka.loglevel = INFO""")))
 
   def newSuperviser(messageListener: ActorRef, exceptionListener: ActorRef) =
     system.actorOf(Props(new Superviser(messageListener, exceptionListener)))
