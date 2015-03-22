@@ -5,6 +5,7 @@ import torentator.manifest.Manifest
 import torentator.io.FileConnectionCreator
 import torentator.peer.PeerPropsCreator
 import akka.actor.Props
+import scala.collection.immutable.BitSet
 
 
 //API messages
@@ -13,7 +14,7 @@ case object StatusRequest
 
 sealed trait Status
 //Downloading in progeress
-case object Downloading
+case class Downloading(downloadedPieces: BitSet)
 //Downloading completed
 case object Downloaded
 
@@ -115,7 +116,7 @@ trait StatusTracker extends ComposableActor with akka.actor.ActorLogging {
   import context.dispatcher
 
   def numberOfPieces: Int
-  private var downloadedPieces = Set.empty[Int]
+  private var downloadedPieces = BitSet()
 
   private val Tick = "StatusTrackerTick"
   context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
@@ -126,7 +127,7 @@ trait StatusTracker extends ComposableActor with akka.actor.ActorLogging {
     case StatusRequest if downloadedPieces.size == numberOfPieces =>
       sender() ! Downloaded
     case StatusRequest =>
-      sender() ! Downloading
+      sender() ! Downloading(downloadedPieces)
     case Tick =>
       log.debug(s"Downloaded {}/{} : {}",
         downloadedPieces.size, numberOfPieces, downloadedPieces.mkString(", "))

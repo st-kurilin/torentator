@@ -5,6 +5,7 @@ import org.scalatest._
 import scala.concurrent.duration._
 import akka.actor.{Actor, ActorRef, Props}
 import torentator._
+import scala.collection.immutable.BitSet
 
 class TorrentSpec extends ActorSpec("TorrentSpec") {
   import akka.testkit.TestProbe
@@ -167,6 +168,24 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
         }
       })}
     }
+
+    "show progress in Downloading responce" in {
+      val piecesToDownload = BitSet(2, 3)
+      val TestContext(client, torrent, _, _) = newTest{ case PeerCreatorContext(l) => Props(new Actor {
+        def receive = { case peer.DownloadPiece(index, offset, length) =>
+          if (piecesToDownload(index)) {
+            val data = readContent(index, offset, length.toInt - offset)
+            sender() ! peer.BlockDownloaded(index, offset, data)
+          }
+      }})}
+
+      torrent.tell(StatusRequest, client.ref)
+      client.fishForMessage(10.seconds) {
+        case Downloading(downloadedPieces) if piecesToDownload == downloadedPieces => true
+        case d: Downloading => torrent.tell(StatusRequest, client.ref); false
+        case Downloaded => false
+      }
+    }
   }
 
   case class TestContext(client: TestProbe, torrent: ActorRef, failureListener: TestProbe, targetFileListener: TestProbe)
@@ -224,7 +243,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     
     torrent.tell(StatusRequest, client.ref)
     client.fishForMessage(10.seconds) {
-      case Downloading => torrent.tell(StatusRequest, client.ref); false
+      case x: Downloading => torrent.tell(StatusRequest, client.ref); false
       case Downloaded => true
     }
 
@@ -251,7 +270,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     }
 
     torrent.tell(StatusRequest, client.ref)
-    client.expectMsg(Downloading)
+    client.expectMsgAnyClassOf(classOf[Downloading])
 
     assert(!failureListener.msgAvailable)
   }
