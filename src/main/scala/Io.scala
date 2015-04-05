@@ -6,6 +6,9 @@ import java.net.InetSocketAddress
 
 /** Module with mackable actors abstraction around IO concepts.*/
 
+case class TcpConnectionRequest(remote: InetSocketAddress)
+case class TcpConnection(props: Props)
+
 case object Connected
 case class ConnectionFailed(msg: String) extends RuntimeException
 
@@ -27,6 +30,7 @@ object Io extends FileConnectionCreator {
   def fileConnectionProps(path: Path, expectedSize: Int): Props =
     Props(classOf[FileConnection], path, expectedSize)
 }
+
 
 
 /*Impl*/

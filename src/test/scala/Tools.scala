@@ -9,12 +9,14 @@ import akka.testkit.{ TestActors, TestKit, ImplicitSender }
 abstract class ActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
 
-  def this(name: String) = this(ActorSystem(name, com.typesafe.config.ConfigFactory.parseString("""akka.loglevel = INFO""")))
+  def this(name: String) = this(ActorSystem(name, com.typesafe.config.ConfigFactory.parseString("""akka.loglevel = DEBUG""")))
 
   def newSuperviser(messageListener: ActorRef, exceptionListener: ActorRef) =
     system.actorOf(Props(new Superviser(messageListener, exceptionListener)))
 
   def forwarderProps(target: ActorRef) = Props(new Forwarder(target))
+
+  def respondWith(respond: Any) = system.actorOf(Props(new StaticAnswer(respond)))
 
   implicit val timeout = Timeout(1.second)
 
@@ -36,8 +38,15 @@ class Superviser(messagesListener: ActorRef, exceptionsListener: ActorRef) exten
     case m => messagesListener ! m
   }
 }
+
 class Forwarder(target: ActorRef) extends Actor {
   def receive = {
     case m => target forward m
+  }
+}
+
+class StaticAnswer(answer: Any) extends Actor {
+  def receive = {
+    case _ => sender ! answer
   }
 }

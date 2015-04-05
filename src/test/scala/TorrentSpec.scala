@@ -13,10 +13,11 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
   import scala.collection.mutable.ArrayBuffer
   import torentator.manifest.{Manifest, SingleFileManifest}
 
+  val NumnerOfPeers = 10
+  val numberOfPieces = 5
+  val pieceLength = Math.pow(2, 6).toInt
+  val totalLength = numberOfPieces * pieceLength.toInt - pieceLength.toInt / 2
   val (manifest: Manifest, content: Seq[Seq[Byte]]) = {
-    val pieceLength = Math.pow(2, 6).toInt
-    val numberOfPieces = 5
-    val totalLength = numberOfPieces * pieceLength.toInt - pieceLength.toInt / 2
     val hashSize = 20
     val content = Seq.tabulate(totalLength)(x => (x % 100 + 1).toByte).grouped(pieceLength).toSeq
     val m = SingleFileManifest(
@@ -52,31 +53,13 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       })}
     }
 
-    "download file using by block downloader peer" in {
-      shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
-          val blockSize = Math.ceil(length.toDouble / 3).toInt
-          val numberOfBlocks = Math.ceil(length.toDouble / blockSize).toInt
-          
-          for {
-            block <- 0 to numberOfBlocks
-            currentBlockSize = Math.min(blockSize, length - block * blockSize).toInt
-            currentOffset = offset + block * blockSize
-            if currentBlockSize > 0
-          } {
-            sender() ! peer.BlockDownloaded(index, currentOffset, readContent(index, currentOffset, currentBlockSize))
-          }
-        }
-      })}
-    }
-
     "download file using peers that download only one block" in {
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
           val blockSize = Math.ceil(length.toDouble / 3).toInt
           if (offset + blockSize < length) {
             sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, blockSize))
-            sender() ! peer.DownloadingFailed(s"test failing on [${index}] ${offset} ~ ${readContent(index, offset, blockSize)}")
+            //sender() ! peer.DownloadingFailed(s"test failing on [${index}] ${offset} ~ ${readContent(index, offset, blockSize)}")
           } else {
             sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt - offset))
           }
@@ -93,19 +76,15 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     }
 
     "download with unreliable peers" in {
-      def shouldFail = scala.util.Random.nextDouble < 0.1
+      val callsCounterPerPiece = (for (i <- 0 until numberOfPieces)
+        yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        require(!shouldFail)
         def receive = { case peer.DownloadPiece(index, offset, length) =>
-          require(!shouldFail)
-          val blockSize = Math.ceil(length.toDouble / 5).toInt
-          val nextBlockOffset = offset + blockSize
-          for (block <- 0 to Math.ceil(length / blockSize).toInt) {
-            require(!shouldFail)
-            val currentBlockSize = Math.min(blockSize, length - block * blockSize).toInt
-            val currentOffset = offset + block * blockSize
-            sender() ! peer.BlockDownloaded(index, currentOffset, readContent(index, currentOffset, currentBlockSize))  
-          }
+          val i = callsCounterPerPiece(index).getAndIncrement
+          if (i == 0) println("Going to fail for " + index)
+          require(i != index)
+          val data = readContent(index, offset, length.toInt)
+          sender() ! peer.BlockDownloaded(index, offset, data)
         }
       })}
     }
@@ -121,10 +100,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
             sender() ! peer.BlockDownloaded(index, offset, data)
             piecesProvided += index
           } else {
-            val m1 = length.toInt / 2
-            val m2 = length.toInt - m1
-            sender() ! peer.BlockDownloaded(index, offset, Seq.fill(m1)(13))
-            sender() ! peer.BlockDownloaded(index, m1, Seq.fill(m2)(13))
+            sender() ! peer.BlockDownloaded(index, offset, Seq.fill(length.toInt)(13))
             mistaked = true
           }
         }
@@ -132,39 +108,41 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     }
 
     "download file using peers that download blocks in arbitary order" in {
+      val numberOfBlocks = 3
+      val downloadOrder = List(2, 0, 1)
+      require(downloadOrder.size == numberOfBlocks)
+      val blockMaxSize = Math.ceil(totalLength.toDouble / numberOfBlocks).toInt
+      val callsCounterPerPiece = (for (i <- 0 until numberOfPieces)
+        yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
-          val numberOfBlocks = 3
-          val downloadOrder = List(2, 0, 1)
-          require(downloadOrder.size == numberOfBlocks)
-          val blockMaxSize = Math.ceil(length.toDouble / numberOfBlocks).toInt
-          for (block <- downloadOrder) {
-            val blockOffset = offset + block * blockMaxSize
-            val blockSize = Math.min(blockMaxSize, length.toInt - blockOffset)
-            require(blockSize > 0)
-            sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
-          }
+          val blockIndex = callsCounterPerPiece(index).getAndIncrement
+          val block = downloadOrder(blockIndex)
+          val blockOffset = offset + block * blockMaxSize
+          val blockSize = Math.min(blockMaxSize, length.toInt - blockOffset)
+          require(blockSize > 0)
+          sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
         }
       })}
     }
 
     "download file using peers that provides peers with overlapping blocks" in {
+      val numberOfMiniBlocks = 5 //Mini blocks can be composed into single blocks
+      val miniBlocksDownloadOrder = List(0 to 1, 3 to 4, 1 to 3)
+      val miniBlockMaxSize = Math.ceil(totalLength.toDouble / numberOfMiniBlocks).toInt
+      val callsCounterPerPiece = (for (i <- 0 until numberOfPieces)
+         yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
-          val numberOfMiniBlocks = 5 //Mini blocks can be composed into single blocks
-          val miniBlocksDownloadOrder = List(0 to 1, 3 to 4, 1 to 3)
-          val miniBlockMaxSize = Math.ceil(length.toDouble / numberOfMiniBlocks).toInt
-          for {
-            blockRange <- miniBlocksDownloadOrder
-            minBlock = blockRange.min
-            maxBlock = blockRange.max
-            numberOfMiniBlocks = blockRange.size
-          } {
-            val blockOffset = offset + minBlock * miniBlockMaxSize
-            val blockSize = Math.min(numberOfMiniBlocks * miniBlockMaxSize, length.toInt - blockOffset)
-            println(s"Sending: blockOffset: ${blockOffset}, blockSize: ${blockSize}")
-            sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
-          }
+          val blockRange = miniBlocksDownloadOrder(callsCounterPerPiece(index).getAndIncrement)
+          val minBlock = blockRange.min
+          val maxBlock = blockRange.max
+          val numberOfMiniBlocks = blockRange.size
+          
+          val blockOffset = offset + minBlock * miniBlockMaxSize
+          val blockSize = Math.min(numberOfMiniBlocks * miniBlockMaxSize, length.toInt - blockOffset)
+          println(s"Sending: blockOffset: ${blockOffset}, blockSize: ${blockSize}")
+          sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
         }
       })}
     }
@@ -197,7 +175,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     val trackerMock = Props(new Actor {
       def receive = {
-         case tracker.RequestAnnounce(manifest) =>
+         case tracker.RequestAnnounce =>
           def randInt = scala.util.Random.nextInt(250) + 1
           val randPeers = List.fill(10)(new java.net.InetSocketAddress(s"${randInt}.${randInt}.${randInt}.${randInt}", 10)).toSet
           sender() ! tracker.AnnounceReceived(tracker.Announce(0, randPeers))
@@ -228,7 +206,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
     val name = "torrent" + scala.util.Random.nextInt
-    val torrent = system.actorOf(Torrent.props(manifest, destination, fileMock, peerCreator, trackerMock), name) 
+    val peerPool = Props(classOf[PeerPool], NumnerOfPeers, manifest, peerCreator, trackerMock)
+    val torrent = system.actorOf(Torrent.props(manifest, destination, fileMock, peerPool), name) 
 
     val client = TestProbe()
     TestContext(client, torrent, failureListener, targetFileListener)
@@ -277,32 +256,33 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 }
 
 
-// class TorrentIntegSpec extends ActorSpec("TorrentIntegSpec") {
-//   import akka.testkit.TestProbe
-//   import scala.util.Random
-//   import scala.collection.mutable.ArrayBuffer
-//   import torentator.manifest.{Manifest, SingleFileManifest}
-//   import akka.pattern.ask
-//   import scala.concurrent._
-//   import scala.concurrent.ExecutionContext.Implicits.global
 
-//   val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
+class TorrentIntegSpec extends ActorSpec("TorrentIntegSpec") {
+  import akka.testkit.TestProbe
+  import scala.util.Random
+  import scala.collection.mutable.ArrayBuffer
+  import torentator.manifest.{Manifest, SingleFileManifest}
+  import akka.pattern.ask
+  import scala.concurrent._
+  import scala.concurrent.ExecutionContext.Implicits.global
 
-//   "do it for real" in {
-//     implicit val timeout = akka.util.Timeout(3.second)
-//     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
-//     val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent")
+  val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
 
-//     awaitCond({
-//       val future = (torrent ? StatusRequest) map {
-//         case Downloading(downloadedPieces) =>
-//           println ("Pieces downloaded: " + downloadedPieces)
-//           false
-//         case Downloaded =>
-//           println("!!!Downloaded!!!")
-//           true
-//       }
-//       Await.result(future, 3.second)
-//     }, 70000.seconds, 5.seconds)
-//   }
-// }
+  "do it for real" in {
+    implicit val timeout = akka.util.Timeout(3.second)
+    val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
+    val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent")
+
+    awaitCond({
+      val future = (torrent ? StatusRequest) map {
+        case Downloading(downloadedPieces) =>
+          //println ("Pieces downloaded: " + downloadedPieces)
+          false
+        case Downloaded =>
+          println("!!!Downloaded!!!")
+          true
+      }
+      Await.result(future, 3.second)
+    }, 70000.seconds, 5.seconds)
+  }
+}

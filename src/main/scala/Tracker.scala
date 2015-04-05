@@ -6,13 +6,13 @@ import akka.actor.Props
 
 /** Tracker actor. Tracker might be used to get announce that contains peers information. */
 
-case class RequestAnnounce(manifest: Manifest)
+case object RequestAnnounce
 case class AnnounceReceived(announce: Announce)
 
 case class Announce(interval: Long, peers: Set[InetSocketAddress])
 
 object Tracker {
-  val props = Props(classOf[Tracker])
+  def props(manifest: Manifest) = Props(classOf[Tracker], manifest)
   val id = "ABCDEFGHIJKLMNOPQRST"
 }
 
@@ -46,7 +46,6 @@ object TrackerImpl {
     //&event=started&numwant=100&no_peer_id=1&compact=1
     val url = s"${manifest.announce}?info_hash=${hash}&peer_id=${Tracker.id}&${rest}"
     val content = get(url)
-
     parseAnnounce(content) match {
       case Success(r) => r
       case Failure(f) => throw f
@@ -79,12 +78,12 @@ object TrackerImpl {
 
 import akka.actor.Actor
 
-class Tracker extends Actor {
+class Tracker(manifest: Manifest) extends Actor {
   import TrackerImpl._
   import context.dispatcher
 
   def receive: Receive = {
-    case RequestAnnounce(manifest) =>
+    case RequestAnnounce =>
       val requester = sender()
       announce(manifest) onSuccess {case a =>
         requester ! AnnounceReceived(a)

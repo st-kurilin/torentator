@@ -4,7 +4,6 @@ import akka.actor.Props
 
 case class DownloadPiece(pieceIndex: Int, begin: Int, length: Long)
 case class BlockDownloaded(pieceIndex: Int, offset: Long, content: Seq[Byte])
-case class PieceDownloaded(pieceIndex: Int)
 case class DownloadingFailed(reason: String) extends RuntimeException
 
 trait PeerPropsCreator {
@@ -126,12 +125,17 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
   import context.dispatcher
 
   override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {
-    case io.ConnectionFailed(reason) => throw new DownloadingFailed(reason)
+    case io.ConnectionFailed(reason) => fail(reason); Escalate
     case e => Escalate
   }
 
+  def fail(reason: String): Unit = {
+    context.stop(self)
+    throw new DownloadingFailed(reason)
+  }
+
   val Tick = "tick"
-  var quality = 1000
+  var quality = 50
   val connection = context.actorOf(connectionProps, "connection")
 
   var hsResponce: Option[Seq[Byte]] = None
@@ -151,10 +155,8 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
       quality += 1
       context become handshaked
       //send(Interested)
-    case Tick if quality > 0 => quality -= 1
-    case Tick =>
-      context become {case _ => }
-      throw new DownloadingFailed("Failed due timeout before handshake")
+    case Tick if quality > 0 && !assigment.isEmpty => quality -= 1
+    case Tick => fail("Failed due timeout before handshake")
   }
 
   def handshaked: Receive = {
@@ -187,18 +189,21 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
           Message might be splitted into parts. Will be ignored: {}""", m)
 
     }
-    case Tick if quality > 0 => quality -= 1
-    case Tick =>
-      context become {case _ => }
-      throw new DownloadingFailed("Failed due timeout after handshake, but before download started")
+    case Tick if quality > 0 && !assigment.isEmpty => quality -= 1
+    case Tick => fail("Failed due timeout after handshake, but before download started")
   }
 
   var data = Seq.empty[Byte]
   var old: Option[Seq[Byte]] = None
   var done = false
   var prevDownloaded = -1
+  def waitForNewAssigment: Receive = {
+    case c @ DownloadPiece(_, offset, _) =>
+      assigment = Some((sender() -> c))
+      download(offset)
+  }
   def download(downloaded: Int): Unit = {
-    require(prevDownloaded <= downloaded)
+    //require(prevDownloaded <= downloaded)
     val (listener, assigment) = this.assigment.get
 
     def handleMsd(msg : PeerMessage) = msg match {
@@ -209,13 +214,14 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
         data = data ++ block
         quality += 2
         listener ! BlockDownloaded(index, begin, block)
-        download(begin + block.length)
+        this.assigment = None
+        context become waitForNewAssigment
+        //download(begin + block.length)
       case m: Piece =>
       case b: Bitfield =>
     }
     require(downloaded <= assigment.length)
     if (downloaded == assigment.length) {
-      listener ! PieceDownloaded(assigment.pieceIndex)
       done = true
       quality += 2
       log.debug("Piece {} downloaded", assigment.pieceIndex)
@@ -238,13 +244,12 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
               old = Some(bs)
             }
         }
-        case Tick if quality >= 0 =>
+        case Tick if quality >= 0 && !this.assigment.isEmpty =>
           quality-= 1
           log.debug("tick piece: {}; downloaded: {}; quality: {}; // ${}", assigment.pieceIndex, downloaded, quality, self)
         case Tick if !done & quality < 0 =>
           log.debug("tick piece: {}; downloaded: {}; ask for replacement // ${}", assigment.pieceIndex, downloaded, self)
-          listener ! DownloadingFailed("Quality is too low")
-          context become { case _ => }
+          fail("Quality is too low")
         case Tick =>
       }
     }
