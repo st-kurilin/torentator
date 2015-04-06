@@ -5,7 +5,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 class TrackerSpec extends FlatSpec with Matchers {
   //TODO: do not test TrackerImpl directly. Do it only throw API.
-  import TrackerImpl._
+  import impl.TrackerImpl._
   import util.{Try, Success, Failure}
 
   //https://wiki.theory.org/BitTorrent_Tracker_Protocol

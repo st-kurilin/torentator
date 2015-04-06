@@ -14,19 +14,19 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
   import torentator.manifest.{Manifest, SingleFileManifest}
 
   val NumnerOfPeers = 10
-  val numberOfPieces = 5
-  val pieceLength = Math.pow(2, 6).toInt
-  val totalLength = numberOfPieces * pieceLength.toInt - pieceLength.toInt / 2
+  val NumberOfPieces = 5
+  val PieceLength = Math.pow(2, 6).toInt
+  val TotalLength = NumberOfPieces * PieceLength.toInt - PieceLength.toInt / 2
   val (manifest: Manifest, content: Seq[Seq[Byte]]) = {
     val hashSize = 20
-    val content = Seq.tabulate(totalLength)(x => (x % 100 + 1).toByte).grouped(pieceLength).toSeq
+    val content = Seq.tabulate(TotalLength)(x => (x % 100 + 1).toByte).grouped(PieceLength).toSeq
     val m = SingleFileManifest(
       name = "test manifest",
       announce = new java.net.URI("fake://fake"),
       infoHash = Seq.fill(hashSize)(1.toByte),
-      pieces = Seq.tabulate(numberOfPieces)(piece => encoding.Encoder.hash(content(piece))),
-      pieceLength = pieceLength,
-      length = totalLength)
+      pieces = Seq.tabulate(NumberOfPieces)(piece => encoding.Encoder.hash(content(piece))),
+      pieceLength = PieceLength,
+      length = TotalLength)
     (m, content)
   }
 
@@ -76,7 +76,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     }
 
     "download with unreliable peers" in {
-      val callsCounterPerPiece = (for (i <- 0 until numberOfPieces)
+      val callsCounterPerPiece = (for (i <- 0 until NumberOfPieces)
         yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
@@ -111,15 +111,15 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       val numberOfBlocks = 3
       val downloadOrder = List(2, 0, 1)
       require(downloadOrder.size == numberOfBlocks)
-      val blockMaxSize = Math.ceil(totalLength.toDouble / numberOfBlocks).toInt
-      val callsCounterPerPiece = (for (i <- 0 until numberOfPieces)
+      val blockMaxSize = Math.ceil(TotalLength.toDouble / numberOfBlocks).toInt
+      val callsCounterPerPiece = (for (i <- 0 until NumberOfPieces)
         yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
           val blockIndex = callsCounterPerPiece(index).getAndIncrement
           val block = downloadOrder(blockIndex)
           val blockOffset = offset + block * blockMaxSize
-          val blockSize = Math.min(blockMaxSize, totalLength.toInt - blockOffset)
+          val blockSize = Math.min(blockMaxSize, TotalLength.toInt - blockOffset)
           println(s"blockMaxSize: ${blockMaxSize}, length: ${length}, blockOffset: ${blockOffset}")
           println(s"offset: ${offset} block : ${block} blockMaxSize:  ${blockMaxSize}")
           require(blockSize > 0)
@@ -132,8 +132,8 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     "download file using peers that provides peers with overlapping blocks" in {
       val numberOfMiniBlocks = 5 //Mini blocks can be composed into single blocks
       val miniBlocksDownloadOrder = List(0 to 1, 3 to 4, 1 to 3)
-      val miniBlockMaxSize = Math.ceil(totalLength.toDouble / numberOfMiniBlocks).toInt
-      val callsCounterPerPiece = (for (i <- 0 until numberOfPieces)
+      val miniBlockMaxSize = Math.ceil(TotalLength.toDouble / numberOfMiniBlocks).toInt
+      val callsCounterPerPiece = (for (i <- 0 until NumberOfPieces)
          yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
@@ -208,7 +208,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
     val name = "torrent" + scala.util.Random.nextInt
-    val peerPool = Props(classOf[PeerPool], NumnerOfPeers, f, trackerMock)
+    val peerPool = PeerPool.props(NumnerOfPeers, f, trackerMock)
     val torrent = system.actorOf(Torrent.props(manifest, destination, fileMock, peerPool), name) 
 
     val client = TestProbe()

@@ -132,6 +132,3 @@ object Manifest {
     hash(seq)
   }
 }
-
-
-
