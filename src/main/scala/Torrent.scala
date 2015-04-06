@@ -31,7 +31,7 @@ object Torrent {
   def props(manifest: Manifest, destination: Path): Props = {
     val tracker = Tracker.props(manifest)
     val peerPropsFactory = (a: Address) => Peer.props(Tracker.id, manifest.infoHash, Io.tcpConnectionProps(a))
-    val pool = Props(classOf[PeerPool], 10, peerPropsFactory, tracker)
+    val pool = PeerPool.props(10, peerPropsFactory, tracker)
     props(manifest, destination, Io, pool)
   }
 }

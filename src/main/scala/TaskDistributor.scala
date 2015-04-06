@@ -5,14 +5,15 @@ import akka.actor.ActorRef
 case class WorkerCreated(worker: ActorRef)
 case class WorkToBeDone(task: Any)
 
-import akka.actor.{Actor, Terminated}
+
 import collection.immutable.Queue
+import java.util.concurrent.TimeoutException
+import akka.actor.{Actor, Terminated}
 import akka.util.Timeout
 import akka.pattern.{ask, after}
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.{Success, Failure}
-import java.util.concurrent.TimeoutException
 
 
 //inspired by http://letitcrash.com/post/29044669086/balancing-workload-across-nodes-with-akka-2
