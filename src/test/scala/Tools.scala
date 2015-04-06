@@ -12,7 +12,7 @@ abstract class ActorSpec(_system: ActorSystem) extends TestKit(_system) with Imp
   def this(name: String) = this(ActorSystem(name, com.typesafe.config.ConfigFactory.parseString("""akka.loglevel = DEBUG""")))
 
   def newSuperviser(messageListener: ActorRef, exceptionListener: ActorRef) =
-    system.actorOf(Props(new Superviser(messageListener, exceptionListener)))
+    system.actorOf(Props(new Superviser(messageListener, exceptionListener)), "Superviser")
 
   def forwarderProps(target: ActorRef) = Props(new Forwarder(target))
 

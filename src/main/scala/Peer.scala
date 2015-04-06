@@ -130,6 +130,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
   }
 
   def fail(reason: String): Unit = {
+    println("Peer failed: " + reason)
     context.stop(self)
     throw new DownloadingFailed(reason)
   }
@@ -155,7 +156,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
       quality += 1
       context become handshaked
       //send(Interested)
-    case Tick if quality > 0 && !assigment.isEmpty => quality -= 1
+    case Tick if quality > 0 => if (!assigment.isEmpty) quality -= 1
     case Tick => fail("Failed due timeout before handshake")
   }
 
@@ -189,7 +190,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
           Message might be splitted into parts. Will be ignored: {}""", m)
 
     }
-    case Tick if quality > 0 && !assigment.isEmpty => quality -= 1
+    case Tick if quality > 0 => if (!assigment.isEmpty) quality -= 1
     case Tick => fail("Failed due timeout after handshake, but before download started")
   }
 
@@ -244,7 +245,7 @@ class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor wi
               old = Some(bs)
             }
         }
-        case Tick if quality >= 0 && !this.assigment.isEmpty =>
+        case Tick if quality > 0 =>
           quality-= 1
           log.debug("tick piece: {}; downloaded: {}; quality: {}; // ${}", assigment.pieceIndex, downloaded, quality, self)
         case Tick if !done & quality < 0 =>

@@ -15,7 +15,12 @@ import torentator.io.Io
 import scala.concurrent.duration._
 import scala.util.{Success, Failure}
 
-class PeerPool(numbersOfPeers: Int, val manifest: Manifest, val peerFactory: PeerPropsCreator, trackerProps: Props) extends Actor
+
+object PeerPool {
+  type PeerInstasiator = Address => Props
+}
+
+class PeerPool(numbersOfPeers: Int, val peerFactory: PeerPool.PeerInstasiator, trackerProps: Props) extends Actor
   with PeerFactory with akka.actor.ActorLogging {
 
   import context.dispatcher
@@ -25,7 +30,7 @@ class PeerPool(numbersOfPeers: Int, val manifest: Manifest, val peerFactory: Pee
       //workers -= sender
       //addNewPeerToPool
       //sender ! PoisonPill
-      Resume
+      Stop
     case f =>
       log.error(f, s"""Failed ${sender}:/ ${workers.mkString("\n")} """)
       Escalate
@@ -65,13 +70,8 @@ trait PeerFactory extends Actor with akka.actor.ActorLogging {
   import context.dispatcher
   implicit val timeout = akka.util.Timeout(3.seconds)
 
-  def peerFactory: PeerPropsCreator
-  def manifest: Manifest
+  def peerFactory: PeerPool.PeerInstasiator
   def tracker: ActorRef
-
-  // override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
-  //   case e => Stop
-  // }
 
   def createPeer: Future[ActorRef] = if (!available.isEmpty) createPeerFromAvailableAddress
     else newAddresses flatMap { case newAddresses: Set[InetSocketAddress] =>
@@ -105,7 +105,7 @@ trait PeerFactory extends Actor with akka.actor.ActorLogging {
 
   def instantiatePeer(address: Address): ActorRef = {
     val addressEnscaped = address.toString.replaceAll("/", "")
-    val props = peerFactory.props(Tracker.id, manifest.infoHash, Io.tcpConnectionProps(address))
+    val props = peerFactory(address)
     log.debug("New peer instanciated: {}", addressEnscaped)
     context.actorOf(props, s"peer:${addressEnscaped}")
   }

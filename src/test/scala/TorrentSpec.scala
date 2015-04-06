@@ -82,7 +82,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
         def receive = { case peer.DownloadPiece(index, offset, length) =>
           val i = callsCounterPerPiece(index).getAndIncrement
           if (i == 0) println("Going to fail for " + index)
-          require(i != index)
+          require(i != 0, "Test failure")
           val data = readContent(index, offset, length.toInt)
           sender() ! peer.BlockDownloaded(index, offset, data)
         }
@@ -119,8 +119,11 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
           val blockIndex = callsCounterPerPiece(index).getAndIncrement
           val block = downloadOrder(blockIndex)
           val blockOffset = offset + block * blockMaxSize
-          val blockSize = Math.min(blockMaxSize, length.toInt - blockOffset)
+          val blockSize = Math.min(blockMaxSize, totalLength.toInt - blockOffset)
+          println(s"blockMaxSize: ${blockMaxSize}, length: ${length}, blockOffset: ${blockOffset}")
+          println(s"offset: ${offset} block : ${block} blockMaxSize:  ${blockMaxSize}")
           require(blockSize > 0)
+          println(s"Downloaded ${index}: ${blockOffset} + ${blockSize}")
           sender() ! peer.BlockDownloaded(index, blockOffset, readContent(index, blockOffset, blockSize))
         }
       })}
@@ -198,15 +201,14 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       }
     }
 
-    def peerCreator = new peer.PeerPropsCreator {
-      def props(trackerId: String, infoHash: Seq[Byte], connection: Props): Props = {
-        actProvider(PeerCreatorContext(failureListener.ref))
-      }
+    def peerPropsFactory (a: java.net.InetSocketAddress): Props = {
+      actProvider(PeerCreatorContext(failureListener.ref))
     }
+    val f = peerPropsFactory(_)
 
     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
     val name = "torrent" + scala.util.Random.nextInt
-    val peerPool = Props(classOf[PeerPool], NumnerOfPeers, manifest, peerCreator, trackerMock)
+    val peerPool = Props(classOf[PeerPool], NumnerOfPeers, f, trackerMock)
     val torrent = system.actorOf(Torrent.props(manifest, destination, fileMock, peerPool), name) 
 
     val client = TestProbe()
@@ -257,32 +259,32 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
 
 
-class TorrentIntegSpec extends ActorSpec("TorrentIntegSpec") {
-  import akka.testkit.TestProbe
-  import scala.util.Random
-  import scala.collection.mutable.ArrayBuffer
-  import torentator.manifest.{Manifest, SingleFileManifest}
-  import akka.pattern.ask
-  import scala.concurrent._
-  import scala.concurrent.ExecutionContext.Implicits.global
+// class TorrentIntegSpec extends ActorSpec("TorrentIntegSpec") {
+//   import akka.testkit.TestProbe
+//   import scala.util.Random
+//   import scala.collection.mutable.ArrayBuffer
+//   import torentator.manifest.{Manifest, SingleFileManifest}
+//   import akka.pattern.ask
+//   import scala.concurrent._
+//   import scala.concurrent.ExecutionContext.Implicits.global
 
-  val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
+//   val manifest = torentator.manifest.Manifest.read(java.nio.file.Paths.get("./src/test/resources/sample.single.http.torrent")).get
 
-  "do it for real" in {
-    implicit val timeout = akka.util.Timeout(3.second)
-    val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
-    val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent")
+//   "do it for real" in {
+//     implicit val timeout = akka.util.Timeout(3.second)
+//     val destination = java.nio.file.Files.createTempFile("torrentator", "temp")
+//     val torrent = system.actorOf(Torrent.props(manifest, destination), "torrent")
 
-    awaitCond({
-      val future = (torrent ? StatusRequest) map {
-        case Downloading(downloadedPieces) =>
-          //println ("Pieces downloaded: " + downloadedPieces)
-          false
-        case Downloaded =>
-          println("!!!Downloaded!!!")
-          true
-      }
-      Await.result(future, 3.second)
-    }, 70000.seconds, 5.seconds)
-  }
-}
+//     awaitCond({
+//       val future = (torrent ? StatusRequest) map {
+//         case Downloading(downloadedPieces) =>
+//           //println ("Pieces downloaded: " + downloadedPieces)
+//           false
+//         case Downloaded =>
+//           println("!!!Downloaded!!!")
+//           true
+//       }
+//       Await.result(future, 3.second)
+//     }, 70000.seconds, 5.seconds)
+//   }
+// }

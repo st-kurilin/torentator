@@ -27,7 +27,13 @@ object Torrent {
   import torentator.io.Io
   import torentator.peer.Peer
   import torentator.tracker.Tracker
-  def props(manifest: Manifest, destination: Path): Props = props(manifest, destination, Io, Props(classOf[PeerPool], 10, manifest, Peer, Tracker.props(manifest)))
+  import java.net.{ InetSocketAddress => Address}
+  def props(manifest: Manifest, destination: Path): Props = {
+    val tracker = Tracker.props(manifest)
+    val peerPropsFactory = (a: Address) => Peer.props(Tracker.id, manifest.infoHash, Io.tcpConnectionProps(a))
+    val pool = Props(classOf[PeerPool], 10, peerPropsFactory, tracker)
+    props(manifest, destination, Io, pool)
+  }
 }
 
 
@@ -111,7 +117,7 @@ class Torrent (
    pieceLength: {}. number of pieces {}""", "destination", manifest.pieceLength,
    java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
 
-  for (piece <- 1 until numberOfPieces)
+  for (piece <- 0 until numberOfPieces)
     context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
 }
 
