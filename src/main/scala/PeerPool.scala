@@ -53,20 +53,21 @@ package impl.distributor.impl {
     case class TaskDone(worker: Worker, result: Any)
     case class WorkerFailed(worker: Worker, reason: Throwable)
 
-    val workTimeout = 1.minute
+    val workTimeout = 3
 
     val Tick = "tick"
     context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
 
     var workers = Map.empty[Worker, Option[WorkPiece]]
-    var raiting = Map.empty[Worker, Int].withDefaultValue(0)
+    var raiting = Map.empty[Worker, Int].withDefaultValue(3)
     var workQueue = Queue.empty[WorkPiece]
 
     def availableWorkers: Iterable[Worker] = workers.filter {case (_, t) => t.isEmpty}.keys.toList.sortBy(-raiting(_))
 
     def askWithFailOnTimeout(worker: ActorRef, task: Any) = {
       val askFuture = worker.ask(task)(1.hour)
-      val delayed = after(workTimeout, using = context.system.scheduler)(Future.failed(new TimeoutException("Task was executed to long")))
+      val actualTimeout = workTimeout * raiting(worker)
+      val delayed = after(actualTimeout.seconds, using = context.system.scheduler)(Future.failed(new TimeoutException("Task was executed to long")))
       Future firstCompletedOf Seq(askFuture, delayed)
     }
 
@@ -113,7 +114,7 @@ package impl.distributor.impl {
             workQueue = workQueue enqueue workpiece
             assignWorkersForWork
           case None =>
-            log.debug("Remove {} from worker list (no task)", worker)
+            log.warning("Remove {} from worker list (no task)", worker)
             workers -= worker
             assignWorkersForWork
         }
@@ -126,6 +127,8 @@ package impl.distributor.impl {
         log.debug("Workers: {}", workers.keys.mkString("\n"))
         log.debug("tasks in queue: {}", workQueue)
         log.debug("tasks in progress: {}", tasksInProgress)
+
+        log.debug("doing: {}", workers.mkString("\n"))
         log.debug("raiting: {}", raiting.mkString("\n"))
     }
     override def postStop = {

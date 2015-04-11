@@ -2,8 +2,8 @@ package torentator.peer
 
 import akka.actor.Props
 
-case class DownloadPiece(pieceIndex: Int, begin: Int, length: Long)
-case class BlockDownloaded(pieceIndex: Int, offset: Long, content: Seq[Byte])
+case class DownloadBlock(pieceIndex: Int, offset: Int, length: Int)
+case class BlockDownloaded(pieceIndex: Int, offset: Int, content: Seq[Byte])
 case class DownloadingFailed(reason: String) extends RuntimeException
 
 trait PeerPropsCreator {
@@ -45,7 +45,7 @@ object PeerMessage {
   def unapply(x: Seq[Byte]): Option[PeerMessage] = {
     def takeInt(bs: Seq[Byte]) = {
       val (intRaw, rest) = bs.splitAt(4)
-      val int = java.nio.ByteBuffer.wrap(intRaw.toArray).getInt()
+      val int = java.nio.ByteBuffer.wrap(intRaw.toArray).getInt
       (int, rest)
     }
 
@@ -68,7 +68,7 @@ object PeerMessage {
         case 4 if data.length == 4 => new Have(readInt(data))
         case 5 => new Bitfield(data)
         case 6  if data.length == 12 =>
-          val parsed = data.grouped(4).map(readInt(_)).toArray
+          val parsed = data.grouped(4).map(readInt).toArray
           val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
           new Request(index, begin, length)
         case 7 if data.length > 8 =>
@@ -113,148 +113,94 @@ object PeerMessage {
 }
 
 package impl {
-  import akka.actor.{ Actor, ActorRef, AllForOneStrategy, PoisonPill }
+  import akka.actor.{ Actor, ActorRef, AllForOneStrategy }
   import akka.actor.SupervisorStrategy._
 
   class Peer(handshakeMessage: Seq[Byte], connectionProps: Props) extends Actor with akka.actor.ActorLogging {
-    import Peer._
     import PeerMessage._
     import torentator.io
     import scala.language.postfixOps
-    import scala.concurrent.duration._
-    import context.dispatcher
 
     override val supervisorStrategy = AllForOneStrategy(loggingEnabled = false) {
       case io.ConnectionFailed(reason) => fail(reason); Escalate
       case e => Escalate
     }
 
+    case class Assigment(requester: ActorRef, task: DownloadBlock)
+
     def fail(reason: String): Unit = {
-      println("Peer failed: " + reason)
+      log.info("Peer failed: " + reason)
       context.stop(self)
       throw new DownloadingFailed(reason)
     }
 
-    val Tick = "tick"
-    var quality = 50
     val connection = context.actorOf(connectionProps, "connection")
-
-    var hsResponce: Option[Seq[Byte]] = None
     connection ! io.Send(handshakeMessage)
 
-    var assigment: Option[(ActorRef, DownloadPiece)] = None
-    var choked = true
+    def receive = handshaking
 
-    context.system.scheduler.schedule(1 seconds, 3 seconds, self, Tick)
-
-    def receive = {
-      case c: DownloadPiece =>
-        assigment = Some((sender() -> c))
-        quality = 5
-      case io.Received(c) =>
-        hsResponce = Some(c)
-        quality += 1
-        context become handshaked
-        //send(Interested)
-      case Tick if quality > 0 => if (!assigment.isEmpty) quality -= 1
-      case Tick => fail("Failed due timeout before handshake")
+    def handshaking: Receive = {
+      case c: DownloadBlock =>
+        context become handshakingWithAssigment(Assigment(sender, c))
+      case io.Received(hsResponce) =>
+        context become chocked
     }
 
-    def handshaked: Receive = {
+    def handshakingWithAssigment(assigment: Assigment): Receive = {
+      case io.Received(hsResponce) =>
+        context become chockedWithAssigment(assigment)
+    }
+
+    def chocked: Receive = {
+      case c: DownloadBlock =>
+        context become chockedWithAssigment(Assigment(sender, c))
       case io.Received(c) => c match {
-        case PeerMessage(m) =>
-          m match {
-            case Unchoke =>
-              choked = false
-              quality += 2
-              assigment match {
-                case Some ((_, DownloadPiece(_, begin, _))) =>
-                  download(begin)
-                case _ =>
-              }
-            case c: DownloadPiece =>
-              assigment = Some((sender() -> c))
-              quality = 5
-              if (!choked) assigment match {
-                case Some ((_, DownloadPiece(_, begin, _))) =>
-                  download(begin)
-                case _ =>
-              }
-            case m: Bitfield =>
-            case Choke => quality -= 2
-            case KeepAlive =>
-            case m => log.debug("Received message during downloading {}", m)
-          }
-        case m =>
-          log.debug("""Received message that can not be parsed.
-            Message might be splitted into parts. Will be ignored: {}""", m)
-
-      }
-      case Tick if quality > 0 => if (!assigment.isEmpty) quality -= 1
-      case Tick => fail("Failed due timeout after handshake, but before download started")
-    }
-
-    var data = Seq.empty[Byte]
-    var old: Option[Seq[Byte]] = None
-    var done = false
-    var prevDownloaded = -1
-    def waitForNewAssigment: Receive = {
-      case c @ DownloadPiece(_, offset, _) =>
-        assigment = Some((sender() -> c))
-        download(offset)
-    }
-    def download(downloaded: Int): Unit = {
-      //require(prevDownloaded <= downloaded)
-      val (listener, assigment) = this.assigment.get
-
-      def handleMsd(msg : PeerMessage) = msg match {
-        case KeepAlive =>
-        case Choke =>
-        case Piece(index, begin, block) if begin + block.length > downloaded =>
-          log.debug("got i:{} b:{} size:${}", index, begin, block.length)
-          data = data ++ block
-          quality += 2
-          listener ! BlockDownloaded(index, begin, block)
-          this.assigment = None
-          context become waitForNewAssigment
-          //download(begin + block.length)
-        case m: Piece =>
-        case b: Bitfield =>
-      }
-      require(downloaded <= assigment.length)
-      if (downloaded == assigment.length) {
-        done = true
-        quality += 2
-        log.debug("Piece {} downloaded", assigment.pieceIndex)
-        context become { case _ => }
-      } else {
-        send(Request(assigment.pieceIndex, downloaded, java.lang.Math.min(16384, (assigment.length - downloaded).toInt)))
-        context become {
-          case io.Received(bs) => bs match {
-            case PeerMessage(m) => handleMsd(m)
-            case _ => old match {
-              case Some(o) =>
-                (o ++ bs) match {
-                  case PeerMessage(m) =>
-                    handleMsd(m)
-                    old = None
-                  case x =>
-                    old = Some(x)
-                }
-              case None =>
-                old = Some(bs)
-              }
-          }
-          case Tick if quality > 0 =>
-            quality-= 1
-            log.debug("tick piece: {}; downloaded: {}; quality: {}; // ${}", assigment.pieceIndex, downloaded, quality, self)
-          case Tick if !done & quality < 0 =>
-            log.debug("tick piece: {}; downloaded: {}; ask for replacement // ${}", assigment.pieceIndex, downloaded, self)
-            fail("Quality is too low")
-          case Tick =>
+        case PeerMessage(m) => m match {
+          case Unchoke => context become unchocked
+          case _ =>
         }
       }
     }
+
+    def chockedWithAssigment(assigment: Assigment): Receive = {
+      case io.Received(c) => c match {
+        case PeerMessage(m) => m match {
+          case Unchoke => context become download(assigment)
+          case _ =>
+        }
+      }
+    }
+
+    def unchocked: Receive = {
+      case c: DownloadBlock =>
+        context become download(Assigment(sender, c))
+    }
+
+    def idle: Receive = {
+      case c : DownloadBlock =>
+        context become download(Assigment(sender, c))
+    }
+
+    def downloading(listener: ActorRef, buffer: Seq[Byte] = Seq.empty): Receive = {
+      case io.Received(bs) => buffer ++ bs match {
+        case PeerMessage(m) => m match {
+          case Piece(index, begin, block) =>
+            log.debug("got i:{} b:{} size:${}", index, begin, block.length)
+            listener ! BlockDownloaded(index, begin, block)
+            context become idle
+          case _ => context become downloading(listener)
+        }
+        
+        case newBuffer => context become downloading(listener, newBuffer)
+      }
+    }
+
+    def download(assigment: Assigment): Receive = {
+      val Assigment(requester: ActorRef, DownloadBlock(pieceIndex, offset, length)) = assigment
+      send(Request(pieceIndex, offset, length))
+      downloading(requester)
+    }
+
     def send(msg: PeerMessage) = connection ! io.Send(toBytes(msg))
   }
 }

@@ -37,7 +37,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
   "Torrent" must {
     "download file using perfect peers" in {
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           val data = readContent(index, offset, length.toInt)
           sender() ! peer.BlockDownloaded(index, offset, data)
         }
@@ -46,7 +46,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     "not download file if hash sum check for piece failing" in {
       shouldNotDownloadUsing  {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           if (index == 0) sender() ! peer.BlockDownloaded(index, offset, Seq.fill(content(index).size)(13.toByte))
           else sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt))
         }
@@ -55,21 +55,25 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
 
     "download file using peers that download only one block" in {
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
-          val blockSize = Math.ceil(length.toDouble / 3).toInt
-          if (offset + blockSize < length) {
-            sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, blockSize))
-            //sender() ! peer.DownloadingFailed(s"test failing on [${index}] ${offset} ~ ${readContent(index, offset, blockSize)}")
-          } else {
-            sender() ! peer.BlockDownloaded(index, offset, readContent(index, offset, length.toInt - offset))
-          }
+        def receive = firstBlock
+        def firstBlock: Receive = {
+          case peer.DownloadBlock(index, offset, length) =>
+            val size = Math.ceil(length.toDouble / 3).toInt
+            val content = readContent(index, offset, Math.min(size, length))
+            sender() ! peer.BlockDownloaded(index, offset, content)
+        }
+
+        def furtherBlock(actualBlockSize: Int): Receive = {
+          case peer.DownloadBlock(index, offset, length) =>
+            val content = readContent(index, offset, Math.min(actualBlockSize, length))
+            sender() ! peer.BlockDownloaded(index, offset, content)
         }
       })}
     }
 
     "should not download if peers doesn't provide anything" in {
       shouldNotDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           sender() ! peer.DownloadingFailed("test failing")
         }
       })}
@@ -79,7 +83,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       val callsCounterPerPiece = (for (i <- 0 until NumberOfPieces)
         yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           val i = callsCounterPerPiece(index).getAndIncrement
           if (i == 0) println("Going to fail for " + index)
           require(i != 0, "Test failure")
@@ -93,7 +97,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       var piecesProvided = Set.empty[Int]
       var mistaked = false
       shouldDownloadUsing {case PeerCreatorContext(failureListener) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           if (piecesProvided.contains(index)) failureListener ! s"Piece ${index} was requested twice"
           val data = readContent(index, offset, length.toInt)
           if (index != 1 || mistaked) {
@@ -115,7 +119,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       val callsCounterPerPiece = (for (i <- 0 until NumberOfPieces)
         yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           val blockIndex = callsCounterPerPiece(index).getAndIncrement
           val block = downloadOrder(blockIndex)
           val blockOffset = offset + block * blockMaxSize
@@ -136,7 +140,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
       val callsCounterPerPiece = (for (i <- 0 until NumberOfPieces)
          yield (i -> new java.util.concurrent.atomic.AtomicInteger())).toMap
       shouldDownloadUsing {case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           val blockRange = miniBlocksDownloadOrder(callsCounterPerPiece(index).getAndIncrement)
           val minBlock = blockRange.min
           val maxBlock = blockRange.max
@@ -153,7 +157,7 @@ class TorrentSpec extends ActorSpec("TorrentSpec") {
     "show progress in Downloading responce" in {
       val piecesToDownload = BitSet(2, 3)
       val TestContext(client, torrent, _, _) = newTest{ case PeerCreatorContext(l) => Props(new Actor {
-        def receive = { case peer.DownloadPiece(index, offset, length) =>
+        def receive = { case peer.DownloadBlock(index, offset, length) =>
           if (piecesToDownload(index)) {
             val data = readContent(index, offset, length.toInt - offset)
             sender() ! peer.BlockDownloaded(index, offset, data)

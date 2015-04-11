@@ -85,7 +85,11 @@ class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
   val superviser = newSuperviser(messagesListener.ref, exceptionListener.ref)
 
   val giveDownloadTask: PartialFunction[ActorRef, Unit] = { case r =>
-    r.tell(DownloadPiece(0, 0, 16000), superviser)
+    r.tell(DownloadBlock(0, 0, 16000), superviser)
+  }
+
+  val giveDownloadTask2: PartialFunction[ActorRef, Unit] = { case r =>
+    r.tell(DownloadBlock(0, 16000, 32000), superviser)
   }
 
   def messageAsBytes(msg: PeerMessage.PeerMessage) = PeerMessage.toBytes(msg)
@@ -173,7 +177,7 @@ class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
       exceptionListener.expectNoMsg()
     }
 
-    "should downlod block if connection is nice" in {
+    "should download block if connection is nice" in {
       val connectionMock = Props(new Actor {
         def receive = { case Send(hs, _, _) =>
             sender() ! Received(hs)
@@ -191,6 +195,31 @@ class PeerActorSpec extends torentator.ActorSpec("PeerSpec") {
       newPeer(connectionMock) onSuccess giveDownloadTask
 
       messagesListener expectMsgAnyClassOf classOf[BlockDownloaded]
+      exceptionListener.expectNoMsg()
+    }
+
+     "should download second block if asked" in {
+      val connectionMock = Props(new Actor {
+        def receive = { case Send(hs, _, _) =>
+            sender() ! Received(hs)
+            sender() ! Received(messageAsBytes(PeerMessage.Unchoke))
+            context become {
+              case Send(PeerMessage(m), _, _) => m match {
+                case PeerMessage.Request(index, begin, length) =>
+                  sender() ! Received(messageAsBytes(new PeerMessage.Piece(index, begin, byteArray(length))))
+                case m => println("Received " + m)
+              }
+            }
+        }
+      })
+
+      val peer = newPeer(connectionMock)
+      peer onSuccess giveDownloadTask
+
+      messagesListener expectMsgAnyClassOf classOf[BlockDownloaded]
+      peer onSuccess giveDownloadTask2
+      messagesListener expectMsgAnyClassOf classOf[BlockDownloaded]
+
       exceptionListener.expectNoMsg()
     }
 

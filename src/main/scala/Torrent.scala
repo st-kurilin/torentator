@@ -175,10 +175,12 @@ package impl {
   }
 
   //Downloads the assigned piece
-  class PieceHandler(peers: ActorRef, piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor with akka.actor.ActorLogging {
+  class PieceHandler(peer: ActorRef, piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor with akka.actor.ActorLogging {
     import Torrent._
     import Peer._
     import scala.collection.mutable.PriorityQueue
+
+    require(totalSize > 0)
 
     implicit val timeout = akka.util.Timeout(3.seconds)
     import context.dispatcher
@@ -192,17 +194,16 @@ package impl {
 
     val torrent = context.parent
 
-
-    def download(peer: ActorRef, offset: Int) = peer ! DownloadPiece(piece, offset, Math.min(offset + 16384, totalSize))
+    
+    def requestBlock(offset: Int) = peer ! DownloadBlock(piece, offset, Math.min(16384, (totalSize - offset).toInt))
 
     def downloaded = pieceData.size
-    var peer: ActorRef = peers
     var done = false
     var notHandledDownloadedBlocks = new PriorityQueue[BlockDownloaded]()(Ordering.by(-_.offset))
 
     var pieceData = Seq.empty[Byte]
 
-    download(peer, downloaded)
+    requestBlock(downloaded)
 
     def checkPieceHashes(pieceIndex: Int, data: Seq[Byte], expectedHash: Seq[Byte]) {
       val actual = Encoder.hash(data).toSeq
@@ -228,7 +229,7 @@ package impl {
             case r => log.debug("Piece {} downloaded. received: {}", piece, r)
           }
         } else {
-          download(peer, downloaded)
+          requestBlock(downloaded)
         }
       case Tick =>
         log.info("Piece {}. Downloaded {}% [{}/{} B]. {}",
