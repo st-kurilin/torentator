@@ -36,7 +36,7 @@ class PeerPoorSpec extends FlatSpec with Matchers {
       ) foreach { case (bytes: Seq[Int], message: PeerMessage) =>
         val encoded = akka.util.ByteString(bytes.map(_.toByte).toArray)
 
-        assert(unapply(encoded)  === Some(message), message)
+        assert(unapply(encoded)  === Some(message), s"$bytes was not encoded into $message")
         assert(PeerMessage.toBytes(message) == encoded, s"Failed during '${message}' test")
     }
   }

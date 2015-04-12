@@ -40,7 +40,7 @@ object Bencode {
         Success(in.first, in.rest)
       }
     }
-    def dictContent(x: List[List[Bencode]]) = 
+    def dictContent(x: List[List[Bencode]]) =
       BDictionary(x.foldLeft(Map.empty[String, Bencode]) {
         case (r, BString(key)::(value:Bencode)::Nil) =>
           r + (key -> value)

@@ -18,7 +18,7 @@ object PeerPool {
 /**
  * Task distributor assigns tasks to existed workers and reassigns tasks on worker failures.
  */
- 
+
 package impl.distributor {
   import akka.actor.ActorRef
 
@@ -104,7 +104,7 @@ package impl.distributor {
       case WorkerFailed(worker, reason) if workers contains worker =>
         log.debug("Worker {} failed with {}", worker, reason)
         workers(worker) match {
-          case Some(workpiece) => 
+          case Some(workpiece) =>
             log.debug("Remove {} from worker list (task reassigned)", worker)
             workers -= worker
             workQueue = workQueue enqueue workpiece
@@ -178,7 +178,7 @@ package impl {
     }
 
     override def postStop() = {
-      log.error("PeerPool stopped") 
+      log.error("PeerPool stopped")
     }
   }
 
@@ -206,7 +206,7 @@ package impl {
         require(!used.contains(toUse), s"$toUse are already in $used")
         available = available.tail
         used += toUse
-        Future {instantiatePeer(toUse)}  
+        Future {instantiatePeer(toUse)}
       }
     }
 

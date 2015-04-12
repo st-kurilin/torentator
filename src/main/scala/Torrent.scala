@@ -79,7 +79,7 @@ package impl {
     def decider(v: Decider) { supervisorDesiders = supervisorDesiders :+ v }
   }
 
-  //The main actor per torrent. 
+  //The main actor per torrent.
   class Torrent (
     _manifest: Manifest,
     destination: Path,
@@ -141,7 +141,7 @@ package impl {
 
   trait PieceHandlerCreator extends ComposableActor with akka.actor.ActorLogging {
     def peers: ActorRef
-    
+
     def pieceHandlerProps(pieceIndex: Int, manifest: SingleFileManifest) = {
       val numberOfPieces = java.lang.Math.ceil(manifest.length / manifest.pieceLength.toDouble).toInt
       val pieceActualLength = if (pieceIndex == numberOfPieces - 1)
@@ -160,7 +160,7 @@ package impl {
     receiver {
       case PieceCollected(index, data) =>
         destinationFile ! Send(data, index * manifest.pieceLength.toInt, index)
-      case Sended(index) => 
+      case Sended(index) =>
         self ! PieceSaved(index)
     }
   }
@@ -183,7 +183,6 @@ package impl {
 
     val torrent = context.parent
 
-    
     def requestBlock(offset: Int) = peer ! DownloadBlock(piece, offset, Math.min(16384, (totalSize - offset).toInt))
 
     def downloaded = pieceData.size

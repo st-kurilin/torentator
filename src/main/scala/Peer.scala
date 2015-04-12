@@ -24,7 +24,7 @@ object Peer extends PeerPropsCreator {
     val pstr = "BitTorrent protocol".getBytes("ISO-8859-1")
     val reserved = Seq(0, 0, 0, 0, 0, 0, 0, 0).map(_.toByte)
     pstrlen ++ pstr ++ reserved ++ infoHash ++ peerId
-  } 
+  }
 }
 
 object PeerMessage {
@@ -42,49 +42,51 @@ object PeerMessage {
   case class Cancel(index: Int, begin: Int, length: Int) extends PeerMessage
   case class Port(port: Int) extends PeerMessage
 
-  def unapply(x: Seq[Byte]): Option[PeerMessage] = {
-    def takeInt(bs: Seq[Byte]) = {
-      val (intRaw, rest) = bs.splitAt(4)
-      val int = java.nio.ByteBuffer.wrap(intRaw.toArray).getInt
-      (int, rest)
-    }
+  private[this] def takeInt(bs: Seq[Byte]): (Int, Seq[Byte]) = {
+    val (intRaw, rest) = bs.splitAt(4)
+    val int = java.nio.ByteBuffer.wrap(intRaw.toArray).getInt
+    (int, rest)
+  }
 
-    def readInt(bs: Seq[Byte]): Int = {
-      takeInt(bs)._1
-    }
-    if (x.length < 4) return None
-    if (x(0) == -1) return Some(KeepAlive)
+  private[this] def readInt(bs: Seq[Byte]): Int = {
+    takeInt(bs)._1
+  }
+
+  private[this] def parseRegularMessage(data: Seq[Byte]): PartialFunction[Int, PeerMessage] = {
+    case 0 => Choke
+    case 1 => Unchoke
+    case 2 => Interested
+    case 3 => NotInterested
+    case 4 if data.length == 4 => new Have(readInt(data))
+    case 5 => new Bitfield(data)
+    case 6  if data.length == 12 =>
+      val parsed = data.grouped(4).map(readInt).toArray
+      val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
+      new Request(index, begin, length)
+    case 7 if data.length > 8 =>
+      val (indexAndBegin, block) = data.splitAt(8)
+      val (index, begin) = takeInt(indexAndBegin)
+      new Piece(index, readInt(begin), block)
+    case 8 if data.length == 12 =>
+      val parsed = data.grouped(4).map(readInt).toArray
+      val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
+      new Cancel(index, begin, length)
+    case 9 if data.length == 2 =>
+      new Port(readInt(Seq(0, 0).map(_.toByte) ++ data))
+  }
+
+  def unapply(x: Seq[Byte]): Option[PeerMessage] = {
     val (length, idAndData) = takeInt(x)
     val (id, data) = idAndData.splitAt(1)
-    if (length == 0) Some(KeepAlive)
-    else if (idAndData.length != length) {
+    if (length == 0) {
+      Some(KeepAlive)
+    } else if (idAndData.length != length) {
       None
     } else {
-      val parsed: PartialFunction[Int, PeerMessage] = {
-        case 0 => Choke
-        case 1 => Unchoke
-        case 2 => Interested
-        case 3 => NotInterested
-        case 4 if data.length == 4 => new Have(readInt(data))
-        case 5 => new Bitfield(data)
-        case 6  if data.length == 12 =>
-          val parsed = data.grouped(4).map(readInt).toArray
-          val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
-          new Request(index, begin, length)
-        case 7 if data.length > 8 =>
-          val (indexAndBegin, block) = data.splitAt(8)
-          val (index, begin) = takeInt(indexAndBegin)
-          new Piece(index, readInt(begin), block)
-        case 8 if data.length == 12 =>
-          val parsed = data.grouped(4).map(readInt).toArray
-          val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
-          new Cancel(index, begin, length)
-        case 9 if data.length == 2 =>
-          new Port(readInt(Seq(0, 0).map(_.toByte) ++ data))
-      }
-      parsed.lift(id(0))
+      parseRegularMessage(data).lift(id(0))
     }
   }
+
   def toBytes(msg: PeerMessage): Seq[Byte] = {
     def intToByteArray(int: Int, size: Int = 4): Seq[Byte] =
       java.nio.ByteBuffer.allocate(4).putInt(int).array().drop(4 - size)
@@ -187,7 +189,6 @@ package impl {
               context become unchocked(None)
             case _ => context become downloading()
           }
-          
           case newBuffer => context become downloading(newBuffer)
         }
       }
