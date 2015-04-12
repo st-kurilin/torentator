@@ -85,12 +85,12 @@ object PeerMessage {
       parsed.lift(id(0))
     }
   }
-  def toBytes(x: PeerMessage): Seq[Byte] = {
+  def toBytes(msg: PeerMessage): Seq[Byte] = {
     def intToByteArray(int: Int, size: Int = 4): Seq[Byte] =
       java.nio.ByteBuffer.allocate(4).putInt(int).array().drop(4 - size)
     def seq(ints: Int*) = ints.map(_.toByte)
 
-    x match {
+    msg match {
       case KeepAlive => seq(0, 0, 0, 0)
       case Choke => seq(0, 0, 0, 1, 0)
       case Unchoke => seq(0, 0, 0, 1, 1)
@@ -169,7 +169,7 @@ package impl {
     }
 
     def unchocked(assignment: Option[Assignment]): Receive = assignment match {
-      case Some(assignment) => download(assignment)
+      case Some(a) => download(a)
       case None => {
         case c: DownloadBlock =>
           context become unchocked(assigned(c))

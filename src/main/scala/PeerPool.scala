@@ -16,7 +16,7 @@ object PeerPool {
 }
 
 /**
- * Task distributor assignes tasks to existed workers and reassignes tasks on worker failures.
+ * Task distributor assigns tasks to existed workers and reassigns tasks on worker failures.
  */
  
 package impl.distributor {
@@ -26,16 +26,12 @@ package impl.distributor {
   case class WorkToBeDone(task: Any)
 
   object TaskDistributor {
-    def props = Props(classOf[impl.TaskDistributor])
+    def props = Props(classOf[TaskDistributor])
   }
-}
 
-package impl.distributor.impl {
-  import impl.distributor._
   import collection.immutable.Queue
   import java.util.concurrent.TimeoutException
   import akka.actor.{Actor, ActorRef, Terminated}
-  import akka.util.Timeout
   import akka.pattern.{ask, after}
   import scala.concurrent.Future
   import scala.concurrent.duration._
@@ -43,7 +39,7 @@ package impl.distributor.impl {
 
 
   //inspired by http://letitcrash.com/post/29044669086/balancing-workload-across-nodes-with-akka-2
-  class TaskDistributor extends Actor with akka.actor.ActorLogging {
+  private class TaskDistributor private extends Actor with akka.actor.ActorLogging {
     import context.dispatcher
     type Worker = ActorRef
     type WorkSender = ActorRef
@@ -72,7 +68,7 @@ package impl.distributor.impl {
     }
 
 
-    def assignWorkersForWork: Unit = {
+    def assignWorkersForWork(): Unit = {
       val currentlyAvailableWorkers = availableWorkers
       for ((workpiece, worker) <- workQueue zip currentlyAvailableWorkers) {
         val WorkPiece(task, workSender) = workpiece
@@ -93,18 +89,18 @@ package impl.distributor.impl {
         log.debug("Got new worker {}", worker)
         workers += (worker -> None)
         context.watch(worker)
-        assignWorkersForWork
+        assignWorkersForWork()
       case WorkToBeDone(task) =>
         log.debug("Got new task {}", task)
-        workQueue = workQueue enqueue WorkPiece(task, sender)
-        assignWorkersForWork
+        workQueue = workQueue enqueue WorkPiece(task, sender())
+        assignWorkersForWork()
       case TaskDone(worker, workResult) =>
         raiting += (worker -> (raiting(worker) + 1))
         val Some(WorkPiece(_, workSender)) = workers(worker)
-        log.info("Work {} performed by worker {}.", workers(worker), worker)
+        log.debug("Work {} performed by worker {}.", workers(worker), worker)
         workSender ! workResult
         workers += (worker -> None)
-        assignWorkersForWork
+        assignWorkersForWork()
       case WorkerFailed(worker, reason) if workers contains worker =>
         log.debug("Worker {} failed with {}", worker, reason)
         workers(worker) match {
@@ -112,27 +108,21 @@ package impl.distributor.impl {
             log.debug("Remove {} from worker list (task reassigned)", worker)
             workers -= worker
             workQueue = workQueue enqueue workpiece
-            assignWorkersForWork
+            assignWorkersForWork()
           case None =>
             log.warning("Remove {} from worker list (no task)", worker)
             workers -= worker
-            assignWorkersForWork
+            assignWorkersForWork()
         }
       case Terminated(worker) =>
         self ! WorkerFailed(worker, new RuntimeException("worker was terminated"))
       case Tick =>
-        lazy val tasksInProgress = workers.values.filter(!_.isEmpty)
+        lazy val tasksInProgress = workers.values.filter(_.nonEmpty)
         log.info("Workers in pool {}; tasks in queue {}; tasks in progress {}",
           workers.size, workQueue.size, tasksInProgress.size)
-        log.debug("Workers: {}", workers.keys.mkString("\n"))
-        log.debug("tasks in queue: {}", workQueue)
-        log.debug("tasks in progress: {}", tasksInProgress)
-
-        log.debug("doing: {}", workers.mkString("\n"))
-        log.debug("raiting: {}", raiting.mkString("\n"))
     }
-    override def postStop = {
-      log.error("Task distrubutor stopped") 
+    override def postStop() = {
+      log.error("Task distributor stopped")
     }
   }
 }
@@ -151,22 +141,24 @@ package impl {
     extends Actor with PeerFactory with akka.actor.ActorLogging {
 
     import context.dispatcher
-    override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
-      case f if workers.contains(sender) =>
-        log.debug("peer {} failed. reason: {}. stopping", sender, f)
-        Stop
-      case f =>
-        log.error(f, s"""Failed ${sender}:/ ${workers.mkString("\n")} """)
-        Escalate
-    }
 
     lazy val taskDistributor = context.actorOf(TaskDistributor.props, "TaskDistributor")
     lazy val tracker = context.actorOf(trackerProps)
-    
-    var workers = Set.empty[ActorRef]
-    for (i <- 1 to numbersOfPeers) addNewPeerToPool 
 
-    def addNewPeerToPool = createPeer onComplete {
+    var workers = Set.empty[ActorRef]
+
+    override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
+      case f if workers.contains(sender()) =>
+        log.debug("peer {} failed. reason: {}. stopping", sender(), f)
+        Stop
+      case f =>
+        log.error(f, s"""Failed ${sender()}:/ ${workers.mkString("\n")} """)
+        Escalate
+    }
+
+    for (i <- 1 to numbersOfPeers) addNewPeerToPool()
+
+    def addNewPeerToPool() = createPeer onComplete {
       case Success(worker) =>
         context.watch(worker)
         self ! WorkerCreated(worker)
@@ -176,16 +168,16 @@ package impl {
 
     def receive = {
       case Terminated(worker) =>
-        log.debug("peer {} Terminated. removing", sender)
+        log.debug("peer {} Terminated. removing", sender())
         workers -= sender
-        addNewPeerToPool
+        addNewPeerToPool()
       case m @ WorkerCreated(worker) =>
         workers += worker
         taskDistributor ! m
       case m => taskDistributor forward WorkToBeDone(m)
     }
 
-    override def postStop = {
+    override def postStop() = {
       log.error("PeerPool stopped") 
     }
   }
@@ -197,7 +189,7 @@ package impl {
     def peerFactory: PeerPool.PeerPropsFactory
     def tracker: ActorRef
 
-    def createPeer: Future[ActorRef] = if (!available.isEmpty) createPeerFromAvailableAddress
+    def createPeer: Future[ActorRef] = if (available.nonEmpty) createPeerFromAvailableAddress
       else newAddresses flatMap { case newAddresses: Set[InetSocketAddress] =>
         synchronized {
           available ++= newAddresses.filter( x => !used.contains(x) && !available.contains(x))
@@ -211,7 +203,7 @@ package impl {
     def createPeerFromAvailableAddress = {
       synchronized {
         val toUse = available.head
-        require(!used.contains(toUse), s"${toUse} are already in ${used}")
+        require(!used.contains(toUse), s"$toUse are already in $used")
         available = available.tail
         used += toUse
         Future {instantiatePeer(toUse)}  
@@ -228,10 +220,10 @@ package impl {
     }
 
     def instantiatePeer(address: InetSocketAddress): ActorRef = {
-      val addressEnscaped = address.toString.replaceAll("/", "")
+      val addressEscaped = address.toString.replaceAll("/", "")
       val props = peerFactory(address)
-      log.debug("New peer instanciated: {}", addressEnscaped)
-      context.actorOf(props, s"peer:${addressEnscaped}")
+      log.debug("New peer instantiated: {}", addressEscaped)
+      context.actorOf(props, s"peer:$addressEscaped")
     }
   }
 }

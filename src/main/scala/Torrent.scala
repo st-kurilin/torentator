@@ -109,10 +109,10 @@ package impl {
 
     log.info("""Downloading torrent to {}
      pieceLength: {}. number of pieces {}""", "destination", manifest.pieceLength,
-     java.lang.Math.floor(manifest.length / manifest.pieceLength).toInt)
+     Math.floor(manifest.length / manifest.pieceLength).toInt)
 
     for (piece <- 0 until numberOfPieces)
-      context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:${piece}")
+      context.actorOf(pieceHandlerProps(piece, manifest), s"Piece_handler:$piece")
   }
 
   //Responds on status requests.
@@ -124,7 +124,7 @@ package impl {
     private var downloadedPieces = BitSet()
 
     private val Tick = "StatusTrackerTick"
-    context.system.scheduler.schedule(1.second, 5.seconds, self, Tick)
+    context.system.scheduler.schedule(1.second, 10.seconds, self, Tick)
 
     receiver {
       case PieceSaved(index) =>
@@ -134,16 +134,12 @@ package impl {
       case StatusRequest =>
         sender() ! Downloading(downloadedPieces)
       case Tick =>
-        log.debug(s"Downloaded {}/{} : {}",
+        log.info(s"Downloaded {}/{} : {}",
           downloadedPieces.size, numberOfPieces, downloadedPieces.mkString(", "))
     }
   }
 
   trait PieceHandlerCreator extends ComposableActor with akka.actor.ActorLogging {
-    import context.dispatcher
-    val torrent = self
-    private val timeout = akka.util.Timeout(3.seconds)
-
     def peers: ActorRef
     
     def pieceHandlerProps(pieceIndex: Int, manifest: SingleFileManifest) = {
@@ -192,7 +188,7 @@ package impl {
 
     def downloaded = pieceData.size
     var done = false
-    var notHandledDownloadedBlocks = new PriorityQueue[BlockDownloaded]()(Ordering.by(-_.offset))
+    val notHandledDownloadedBlocks = new PriorityQueue[BlockDownloaded]()(Ordering.by(-_.offset))
 
     var pieceData = Seq.empty[Byte]
 
@@ -207,9 +203,9 @@ package impl {
     def receive = {
       case m: BlockDownloaded =>
         notHandledDownloadedBlocks enqueue m
-        notHandledDownloadedBlocks = notHandledDownloadedBlocks dropWhile {
+        notHandledDownloadedBlocks dropWhile {
           case BlockDownloaded(pieceIndex, offset, content) if offset <= downloaded =>
-            pieceData = pieceData ++ content.drop((downloaded - offset))
+            pieceData = pieceData ++ content.drop(downloaded - offset)
             true
           case _ => false
         }
