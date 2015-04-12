@@ -13,7 +13,7 @@ import scala.collection.immutable.BitSet
 case object StatusRequest
 
 sealed trait Status
-//Downloading in progeress
+//Downloading in progress
 case class Downloading(downloadedPieces: BitSet)
 //Downloading completed
 case object Downloaded
@@ -37,16 +37,13 @@ object Torrent {
 }
 
 package impl {
-  import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, OneForOneStrategy, PoisonPill }
+  import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, OneForOneStrategy }
   import akka.actor.SupervisorStrategy._
-  import akka.pattern.ask
   import scala.concurrent.duration._
-  import scala.concurrent.{Future, Promise}
   import torentator.peer._
   import torentator.io._
   import torentator.manifest.SingleFileManifest
   import torentator.encoding.Encoder
-  import java.net.{ InetSocketAddress => Address}
 
   //Internal messages
   case class PeerRequest(requester: ActorRef)
@@ -54,7 +51,7 @@ package impl {
   case class PieceSaved(pieceIndex: Int)
 
   case class PieceHashCheckFailed(piece: Int, expected: Seq[Byte], actual: Seq[Byte]) extends RuntimeException(s"""
-    PieceHashCheckFailed for piece ${piece}.
+    PieceHashCheckFailed for piece $piece.
     Expected: ${expected.mkString(", ")}.
     Actual  : ${actual.mkString(", ")}""")
 
@@ -91,11 +88,9 @@ package impl {
     extends ComposableActor with PieceHandlerCreator with StatusTracker with FileFlusher
     with akka.actor.ActorLogging {
 
-    import Torrent._
-
     decider {
       case e: PieceHashCheckFailed =>
-        log.warning("Failed on piece hash check {}", sender)
+        log.warning("Failed on piece hash check {}", sender())
         Restart
       case e =>
         log.error(e, "Torrent error")
@@ -176,8 +171,6 @@ package impl {
 
   //Downloads the assigned piece
   class PieceHandler(peer: ActorRef, piece: Int, totalSize: Long, hash: Seq[Byte]) extends Actor with akka.actor.ActorLogging {
-    import Torrent._
-    import Peer._
     import scala.collection.mutable.PriorityQueue
 
     require(totalSize > 0)
@@ -216,7 +209,7 @@ package impl {
         notHandledDownloadedBlocks enqueue m
         notHandledDownloadedBlocks = notHandledDownloadedBlocks dropWhile {
           case BlockDownloaded(pieceIndex, offset, content) if offset <= downloaded =>
-            pieceData = pieceData ++ content.drop((downloaded - offset).toInt)
+            pieceData = pieceData ++ content.drop((downloaded - offset))
             true
           case _ => false
         }

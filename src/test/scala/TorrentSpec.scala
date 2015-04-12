@@ -1,18 +1,15 @@
 package torentator.torrent
 
 
-import org.scalatest._
-import scala.concurrent.duration._
-import akka.actor.{Actor, ActorRef, Props}
 import torentator._
+import scala.concurrent.duration._
 import scala.collection.immutable.BitSet
+import scala.collection.mutable.ArrayBuffer
+import akka.actor.{Actor, ActorRef, Props}
+import akka.testkit.TestProbe
+import torentator.manifest.{Manifest, SingleFileManifest}
 
 class TorrentSpec extends ActorSpec("TorrentSpec") {
-  import akka.testkit.TestProbe
-  import scala.util.Random
-  import scala.collection.mutable.ArrayBuffer
-  import torentator.manifest.{Manifest, SingleFileManifest}
-
   val NumnerOfPeers = 10
   val NumberOfPieces = 5
   val PieceLength = Math.pow(2, 6).toInt

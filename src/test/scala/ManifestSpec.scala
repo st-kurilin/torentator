@@ -58,10 +58,10 @@ class ManifestSpec extends FlatSpec with Matchers {
     manifest match {
       case Success(SingleFileManifest(name, announce, hash, pieces, pieceLength, length)) => 
         name should not be empty
-        announce should not be (null)
+        announce should not be null
         hash should have size 20
-        pieceLength should not be (0)
-        length should not be (0)
+        pieceLength should not be 0
+        length should not be 0
         pieces should not be empty
         assert(hash === Encoder.parseByteArray("1619ecc9373c3639f4ee3e261638f29b33a6cbd6"))
       case Success(m) => fail(m.toString)
@@ -75,9 +75,9 @@ class ManifestSpec extends FlatSpec with Matchers {
     manifest match {
       case Success(MultiFileManifest(name, announce, hash, pieceLength, files)) => 
         name should not be empty
-        announce should not be (null)
+        announce should not be null
         hash should have size 20
-        pieceLength should not be (0)
+        pieceLength should not be 0
         files should not be empty
       case Success(m) => fail(m.toString)
       case Failure(e) => fail(e)

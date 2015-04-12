@@ -17,7 +17,7 @@ object Tracker {
 }
 
 package impl {
-  import util.{Try, Success, Failure}
+  import util.{Success, Failure}
   import torentator.bencoding._
   import torentator.encoding.Encoder._
   import scala.concurrent.Future
@@ -42,7 +42,7 @@ package impl {
       //?info_hash=%16%19%EC%C97%3C69%F4%EE%3E%26%168%F2%9B3%A6%CB%D6
       //&peer_id=ABCDEFGHIJKLMNOPQRST&port=6881&uploaded=0&downloaded=0&left=727955456
       //&event=started&numwant=100&no_peer_id=1&compact=1
-      val url = s"${manifest.announce}?info_hash=${hash}&peer_id=${Tracker.id}&${rest}"
+      val url = s"${manifest.announce}?info_hash=$hash&peer_id=${Tracker.id}&$rest"
       val content = get(url)
       parseAnnounce(content) match {
         case Success(r) => r
@@ -57,10 +57,10 @@ package impl {
               val peers = peersInShortForm.grouped(6).map(a => parseHostAndPort(a)).toSet
               Success(new Announce(interval, peers))
             case f => Failure(new RuntimeException(
-              s"Could not parse announce. Short peers description expected, but [${f}] found."))
+              s"Could not parse announce. Short peers description expected, but [$f] found."))
         }
         case f => Failure(new RuntimeException(
-              s"Could not parse announce. Dictionary expected, but [${f}] found."))
+              s"Could not parse announce. Dictionary expected, but [$f] found."))
       }
     }
 

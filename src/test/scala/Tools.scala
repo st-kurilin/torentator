@@ -4,7 +4,7 @@ import scala.concurrent.duration._
 import akka.actor.{Actor, ActorRef, Props, ActorSystem, AllForOneStrategy}
 import akka.util.Timeout
 import org.scalatest._
-import akka.testkit.{ TestActors, TestKit, ImplicitSender }
+import akka.testkit.{ TestKit, ImplicitSender }
 
 abstract class ActorSpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {

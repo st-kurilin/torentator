@@ -76,7 +76,7 @@ object PeerMessage {
           val (index, begin) = takeInt(indexAndBegin)
           new Piece(index, readInt(begin), block)
         case 8 if data.length == 12 =>
-          val parsed = data.grouped(4).map(readInt(_)).toArray
+          val parsed = data.grouped(4).map(readInt).toArray
           val (index, begin, length) = (parsed(0), parsed(1), parsed(2))
           new Cancel(index, begin, length)
         case 9 if data.length == 2 =>
@@ -126,7 +126,7 @@ package impl {
       case e => Escalate
     }
 
-    case class Assigment(requester: ActorRef, task: DownloadBlock)
+    case class Assignment(requester: ActorRef, task: DownloadBlock)
 
     def fail(reason: String): Unit = {
       log.info("Peer failed: " + reason)
@@ -141,19 +141,19 @@ package impl {
 
     def handshaking: Receive = {
       case c: DownloadBlock =>
-        context become handshakingWithAssigment(Assigment(sender, c))
+        context become handshakingWithAssigment(Assignment(sender(), c))
       case io.Received(hsResponce) =>
         context become chocked
     }
 
-    def handshakingWithAssigment(assigment: Assigment): Receive = {
+    def handshakingWithAssigment(assigment: Assignment): Receive = {
       case io.Received(hsResponce) =>
         context become chockedWithAssigment(assigment)
     }
 
     def chocked: Receive = {
       case c: DownloadBlock =>
-        context become chockedWithAssigment(Assigment(sender, c))
+        context become chockedWithAssigment(Assignment(sender(), c))
       case io.Received(c) => c match {
         case PeerMessage(m) => m match {
           case Unchoke => context become unchocked
@@ -162,7 +162,7 @@ package impl {
       }
     }
 
-    def chockedWithAssigment(assigment: Assigment): Receive = {
+    def chockedWithAssigment(assigment: Assignment): Receive = {
       case io.Received(c) => c match {
         case PeerMessage(m) => m match {
           case Unchoke => context become download(assigment)
@@ -173,12 +173,12 @@ package impl {
 
     def unchocked: Receive = {
       case c: DownloadBlock =>
-        context become download(Assigment(sender, c))
+        context become download(Assignment(sender(), c))
     }
 
     def idle: Receive = {
       case c : DownloadBlock =>
-        context become download(Assigment(sender, c))
+        context become download(Assignment(sender(), c))
     }
 
     def downloading(listener: ActorRef, buffer: Seq[Byte] = Seq.empty): Receive = {
@@ -195,8 +195,8 @@ package impl {
       }
     }
 
-    def download(assigment: Assigment): Receive = {
-      val Assigment(requester: ActorRef, DownloadBlock(pieceIndex, offset, length)) = assigment
+    def download(assigment: Assignment): Receive = {
+      val Assignment(requester: ActorRef, DownloadBlock(pieceIndex, offset, length)) = assigment
       send(Request(pieceIndex, offset, length))
       downloading(requester)
     }

@@ -18,7 +18,7 @@ object Manifest {
   import torentator.bencoding._
   import torentator.encoding.Encoder._
   import util.{Try, Success, Failure}
-  import java.nio.file.{Path, Paths}
+  import java.nio.file.Path
 
   def parse(encoded: Bencode, hash: Seq[Byte]): Try[Manifest] = parseImpl(encoded, hash)
 
@@ -45,7 +45,7 @@ object Manifest {
     def f(msg: String) = Failure(new RuntimeException(msg))
     def decodeAnnounce(encoded: Bencode) = encoded match {
       case BString(s) => Success(s)
-      case e => f(s"Manifest 'info' expected to be string, but [${e}] found.")
+      case e => f(s"Manifest 'info' expected to be string, but [$e] found.")
     }
     val hashSize = 20
     def decodeInfo(announce: String, encoded: Bencode) = encoded match {
@@ -73,11 +73,11 @@ object Manifest {
             }
           case (name, pieceLength, length, files, pieceHashes) =>
             f(s"""Can not determine structure of 'manifest.info':
-                name: ${name}, pieceLength: ${pieceLength},
-                length: ${length}, files: ${files}, pieceHashes: ${pieceHashes}
+                name: $name, pieceLength: $pieceLength,
+                length: $length, files: $files, pieceHashes: $pieceHashes
                 available keys: ${info.keys}""")
         }
-      case e => f(s"Manifest 'info' expected to be dictionary, but [${e}] found.")
+      case e => f(s"Manifest 'info' expected to be dictionary, but [$e] found.")
     }
     def decodeFiles(encoded: Seq[Bencode]) = {
       flatten(encoded map {
@@ -90,16 +90,16 @@ object Manifest {
             }) map { l =>
               l.foldLeft("") {
                 case (r, e) if r.isEmpty => e
-                case (r, e) => s"${r}/${e}"
+                case (r, e) => s"$r/$e"
               }
             } map { p =>
               (length, p)
             }
           case e => f(s"""File in 'manifest.info.files' expected to be dictinary
-            with 'length' and 'path' but [${e}] found.""")
+            with 'length' and 'path' but [$e] found.""")
         }
         case e => f(s"""File in 'manifest.info.files'
-          expected to be dictinary but ${e} found.""")
+          expected to be dictionary but $e found.""")
       })
     }
     encoded match {
@@ -107,7 +107,7 @@ object Manifest {
         decodeAnnounce(m("announce")) flatMap {
           announce => decodeInfo(announce, m("info"))
         }
-      case e => f(s"Manifest expected to be dictionary, but [${e}] found.")
+      case e => f(s"Manifest expected to be dictionary, but [$e] found.")
     }
   }
 

@@ -18,24 +18,24 @@ object Encoder {
       'a'.toInt to 'z'.toInt,
       'A'.toInt to 'Z'.toInt)
 
-    val out = new StringBuilder();
+    val out = new StringBuilder()
     for (letter <- ints) {
       if (asIs.contains(letter) || asIsRanges.exists(_.contains(letter))) {
-        out.append(letter.toChar);
+        out.append(letter.toChar)
       } else {
-        var s = Integer.toHexString(letter).toUpperCase()
+        var s = Integer.toHexString(letter).toUpperCase
         if (s.length() == 1) {
-          s = "0" + s;
+          s = "0" + s
         }
         out.append("%" + s.substring(s.length() - 2, s.length()))
       }
     }
-    out.toString();
+    out.toString()
   }
 
   def parseByteArray(s: String): Seq[Byte] = {
     def parseHex(x: String): Byte = Integer.parseInt(x, 16).toByte
-    val o: Tuple2[String, List[Byte]] = (("", List.empty[Byte]))
+    val o: (String, List[Byte]) = ("", List.empty[Byte])
     val (_, r) = s.foldRight(o) { (x, r) =>
       val (cur, res) = r
       if (cur.isEmpty) (x.toString, res)

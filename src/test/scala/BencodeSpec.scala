@@ -3,7 +3,7 @@ package torentator.bencoding
 import org.scalatest.FlatSpec
 import org.scalatest.prop.TableDrivenPropertyChecks._
 
-class BencodingSpec extends FlatSpec {
+class BencodeSpec extends FlatSpec {
   import Bencode._
   import util.Success
 

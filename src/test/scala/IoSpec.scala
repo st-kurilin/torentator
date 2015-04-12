@@ -1,9 +1,7 @@
 package torentator.io
 
 import scala.concurrent.duration._
-import akka.actor.{Actor, ActorRef, Props, ActorSystem}
-import org.scalatest._
-import akka.testkit.{ TestActors, TestKit, ImplicitSender }
+import akka.actor.{Actor, ActorRef, Props}
 import akka.testkit.TestProbe
 import Io._
 

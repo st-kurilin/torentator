@@ -4,7 +4,7 @@ import akka.actor.Props
 import java.nio.file.Path
 import java.net.InetSocketAddress
 
-/** Module with mackable actors abstraction around IO concepts.*/
+/** Module with mockable actors abstraction around IO concepts.*/
 
 case class TcpConnectionRequest(remote: InetSocketAddress)
 case class TcpConnection(props: Props)
@@ -32,13 +32,12 @@ object Io extends FileConnectionCreator {
 }
 
 package impl {
-  import akka.actor.{ Actor, ActorRef, Props, AllForOneStrategy, PoisonPill }
+  import akka.actor.{ Actor, ActorRef, AllForOneStrategy}
   import akka.util.ByteString
   import scala.concurrent.duration._
   import akka.actor.SupervisorStrategy._
 
   class FileConnection(path: java.nio.file.Path, expectedSize: Int) extends Actor {
-    import Io._
     import context.dispatcher
     import java.nio.channels.AsynchronousFileChannel
     import java.nio.file.StandardOpenOption

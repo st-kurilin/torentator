@@ -5,7 +5,6 @@ import org.scalatest.prop.TableDrivenPropertyChecks._
 
 class EncoderSpec extends FlatSpec {
   import Encoder._
-  import util.Success
 
   "Encoder" should "parse byte array from string" in {
     val expected = List(0x16, 0x19, 0xec, 0xc9, 0x37,
