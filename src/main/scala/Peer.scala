@@ -134,71 +134,65 @@ package impl {
       throw new DownloadingFailed(reason)
     }
 
+    def assigned(c: DownloadBlock) = Some(Assignment(sender(), c))
+
     val connection = context.actorOf(connectionProps, "connection")
     connection ! io.Send(handshakeMessage)
 
-    def receive = handshaking
+    def receive = handshaking(None)
 
-    def handshaking: Receive = {
+    def handshaking(assignment: Option[Assignment]): Receive = {
       case c: DownloadBlock =>
-        context become handshakingWithAssigment(Assignment(sender(), c))
+        context become handshaking(assigned(c))
       case io.Received(hsResponce) =>
-        context become chocked
+        context become chocked(assignment)
     }
 
-    def handshakingWithAssigment(assigment: Assignment): Receive = {
-      case io.Received(hsResponce) =>
-        context become chockedWithAssigment(assigment)
-    }
-
-    def chocked: Receive = {
+    def chocked(assignment: Option[Assignment]): Receive = {
       case c: DownloadBlock =>
-        context become chockedWithAssigment(Assignment(sender(), c))
+        context become chocked(assigned(c))
       case io.Received(c) => c match {
         case PeerMessage(m) => m match {
-          case Unchoke => context become unchocked
+          case Unchoke => context become unchocked(assignment)
           case _ =>
         }
       }
     }
 
-    def chockedWithAssigment(assigment: Assignment): Receive = {
+    def chockedWithassignment(assignment: Assignment): Receive = {
       case io.Received(c) => c match {
         case PeerMessage(m) => m match {
-          case Unchoke => context become download(assigment)
+          case Unchoke => context become download(assignment)
           case _ =>
         }
       }
     }
 
-    def unchocked: Receive = {
-      case c: DownloadBlock =>
-        context become download(Assignment(sender(), c))
-    }
-
-    def idle: Receive = {
-      case c : DownloadBlock =>
-        context become download(Assignment(sender(), c))
-    }
-
-    def downloading(listener: ActorRef, buffer: Seq[Byte] = Seq.empty): Receive = {
-      case io.Received(bs) => buffer ++ bs match {
-        case PeerMessage(m) => m match {
-          case Piece(index, begin, block) =>
-            log.debug("got i:{} b:{} size:${}", index, begin, block.length)
-            listener ! BlockDownloaded(index, begin, block)
-            context become idle
-          case _ => context become downloading(listener)
-        }
-        
-        case newBuffer => context become downloading(listener, newBuffer)
+    def unchocked(assignment: Option[Assignment]): Receive = assignment match {
+      case Some(assignment) => download(assignment)
+      case None => {
+        case c: DownloadBlock =>
+          context become unchocked(assigned(c))
       }
     }
+    def download(assignment: Assignment): Receive = {
+      val Assignment(requester: ActorRef, DownloadBlock(pieceIndex, offset, length)) = assignment
 
-    def download(assigment: Assignment): Receive = {
-      val Assignment(requester: ActorRef, DownloadBlock(pieceIndex, offset, length)) = assigment
+      def downloading(buffer: Seq[Byte] = Seq.empty): Receive = {
+        case io.Received(bs) => buffer ++ bs match {
+          case PeerMessage(m) => m match {
+            case Piece(index, begin, block) =>
+              log.debug("got i:{} b:{} size:${}", index, begin, block.length)
+              requester ! BlockDownloaded(index, begin, block)
+              context become unchocked(None)
+            case _ => context become downloading()
+          }
+          
+          case newBuffer => context become downloading(newBuffer)
+        }
+      }
       send(Request(pieceIndex, offset, length))
-      downloading(requester)
+      downloading()
     }
 
     def send(msg: PeerMessage) = connection ! io.Send(toBytes(msg))
